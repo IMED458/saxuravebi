@@ -1167,8 +1167,8 @@ export const api = {
     };
     if (!ord.payments) ord.payments = [];
     ord.payments.push(newPayment);
-    ord.paidAmount = ord.payments.reduce((sum, p) => sum + p.amount, 0);
-    ord.balanceDue = Math.max(0, ord.grandTotal - ord.paidAmount);
+    ord.paidAmount = round2(ord.payments.reduce((sum, p) => sum + p.amount, 0));
+    ord.balanceDue = Math.max(0, round2(ord.grandTotal - ord.paidAmount));
     ord.paymentStatus = ord.paidAmount >= ord.grandTotal ? 'fully_paid' : ord.paidAmount > 0 ? 'partially_paid' : 'unpaid';
 
     const tx: CashTransaction = {
@@ -1183,9 +1183,116 @@ export const api = {
       userName: userName || 'ოპერატორი'
     };
     data.cashTransactions.unshift(tx);
-    await Promise.all([store.set('orders', ord), store.set('cashTransactions', tx)]);
-    await store.logAudit(userId || 'user', userName || 'ოპერატორი', 'შეკვეთაზე გადახდა', `${ord.orderNo} - დაემატა ${paymentAmount} ₾`);
+
+    const writes: Promise<any>[] = [store.set('orders', ord), store.set('cashTransactions', tx)];
+    // If goods were already handed out, this payment pays down the customer's debt.
+    const cust = data.customers.find((c) => c.id === ord.customerId);
+    if (ord.isFulfilled && cust && cust.totalDebt > 0) {
+      cust.totalDebt = Math.max(0, round2(cust.totalDebt - paymentAmount));
+      writes.push(store.set('customers', cust));
+    }
+    await Promise.all(writes);
+    await store.logAudit(userId || 'user', userName || 'ოპერატორი', 'შეკვეთაზე გადახდა', `${ord.orderNo} - დაემატა ${paymentAmount} ₾ (${method})`);
     return ord;
+  },
+
+  // Admin: delete a single order payment and recompute totals/debt/transactions.
+  async deleteOrderPayment(orderId: string, paymentId: string, actor?: { userId?: string; userName?: string }): Promise<Order> {
+    const data = await ready();
+    const ord = data.orders.find((o) => o.id === orderId);
+    if (!ord) throw new Error('შეკვეთა ვერ მოიძებნა');
+    const payment = (ord.payments || []).find((p) => p.id === paymentId);
+    if (!payment) throw new Error('გადახდა ვერ მოიძებნა');
+
+    ord.payments = ord.payments.filter((p) => p.id !== paymentId);
+    ord.paidAmount = round2(ord.payments.reduce((sum, p) => sum + p.amount, 0));
+    ord.balanceDue = Math.max(0, round2(ord.grandTotal - ord.paidAmount));
+    ord.paymentStatus = ord.paidAmount >= ord.grandTotal ? 'fully_paid' : ord.paidAmount > 0 ? 'partially_paid' : 'unpaid';
+
+    // Remove the matching cash transaction so reports/stats stay correct.
+    const txIdx = data.cashTransactions.findIndex(
+      (tx) => tx.referenceNo === ord.orderNo && tx.type === 'customer_payment' && Math.abs(tx.amount - payment.amount) < 0.001 && tx.method === payment.method
+    );
+    const writes: Promise<any>[] = [store.set('orders', ord)];
+    if (txIdx !== -1) {
+      const txId = data.cashTransactions[txIdx].id;
+      data.cashTransactions.splice(txIdx, 1);
+      writes.push(store.del('cashTransactions', txId));
+    }
+    // If goods were handed out, removing a payment restores the customer's debt.
+    const cust = data.customers.find((c) => c.id === ord.customerId);
+    if (ord.isFulfilled && cust) {
+      cust.totalDebt = round2(cust.totalDebt + payment.amount);
+      writes.push(store.set('customers', cust));
+    }
+    await Promise.all(writes);
+    await store.logAudit(actor?.userId || 'admin', actor?.userName || 'ადმინი', 'გადახდის წაშლა', `${ord.orderNo} - წაიშალა გადახდა ${payment.amount} ₾ (${payment.method})`);
+    return ord;
+  },
+
+  // Admin: delete an entire order, reversing stock, debt and cash transactions.
+  async deleteOrder(orderId: string, actor?: { userId?: string; userName?: string }): Promise<{ success: boolean }> {
+    const data = await ready();
+    const ord = data.orders.find((o) => o.id === orderId);
+    if (!ord) throw new Error('შეკვეთა ვერ მოიძებნა');
+    const nowIso = new Date().toISOString();
+    const changedProducts: Product[] = [];
+    const newMovements: StockMovement[] = [];
+
+    // Restore stock if the order had been fulfilled.
+    if (ord.isFulfilled) {
+      for (const item of ord.items) {
+        const prod = data.products.find((p) => p.id === item.productId);
+        if (!prod) continue;
+        const qty = Number(item.quantity);
+        if (!qty || qty <= 0) continue;
+        const prevStock = prod.currentStock;
+        prod.currentStock = round2(prevStock + qty);
+        prod.totalSold = Math.max(0, (prod.totalSold || 0) - qty);
+        prod.updatedAt = nowIso;
+        changedProducts.push(prod);
+        const mov: StockMovement = {
+          id: uid('mov'),
+          productId: prod.id,
+          productName: prod.name,
+          changeQuantity: qty,
+          previousStock: prevStock,
+          newStock: prod.currentStock,
+          type: 'adjustment',
+          referenceNo: ord.orderNo,
+          note: `შეკვეთის წაშლა (${ord.orderNo}) — მარაგის დაბრუნება`,
+          date: nowIso,
+          userId: actor?.userId || 'admin',
+          userName: actor?.userName || 'ადმინი'
+        };
+        data.stockMovements.unshift(mov);
+        newMovements.push(mov);
+      }
+    }
+
+    const writes: Promise<any>[] = [];
+    // Reverse customer debt attributed to a fulfilled, not-fully-paid order.
+    const cust = data.customers.find((c) => c.id === ord.customerId);
+    if (ord.isFulfilled && cust) {
+      if (ord.balanceDue > 0) cust.totalDebt = Math.max(0, round2(cust.totalDebt - ord.balanceDue));
+      cust.totalPurchased = Math.max(0, round2((cust.totalPurchased || 0) - ord.grandTotal));
+      writes.push(store.set('customers', cust));
+    }
+
+    // Remove all cash transactions tied to this order.
+    const relatedTx = data.cashTransactions.filter((tx) => tx.referenceNo === ord.orderNo);
+    for (const tx of relatedTx) {
+      const idx = data.cashTransactions.findIndex((t) => t.id === tx.id);
+      if (idx !== -1) data.cashTransactions.splice(idx, 1);
+      writes.push(store.del('cashTransactions', tx.id));
+    }
+
+    writes.push(store.setMany('products', changedProducts));
+    writes.push(store.setMany('stockMovements', newMovements));
+    writes.push(store.del('orders', ord.id));
+    await Promise.all(writes);
+    await store.logAudit(actor?.userId || 'admin', actor?.userName || 'ადმინი', 'შეკვეთის წაშლა', `წაიშალა შეკვეთა ${ord.orderNo} (${ord.customerName}), ჯამი: ${ord.grandTotal} ₾`);
+    return { success: true };
   },
 
   async fulfillOrder(id: string): Promise<Order> {
@@ -1242,13 +1349,24 @@ export const api = {
     ord.fulfilledAt = nowIso;
     ord.status = 'fulfilled';
 
-    await Promise.all([
+    // Goods handed over → any unpaid balance becomes a real customer receivable,
+    // regardless of payment status (credit sale). Stock decrease is independent
+    // of whether the client has paid.
+    const writes: Promise<any>[] = [
       store.setMany('products', changedProducts),
       store.setMany('productBatches', changedBatches),
       store.setMany('stockMovements', newMovements),
       store.set('orders', ord)
-    ]);
-    await store.logAudit(ord.userId || 'user', ord.userName || 'ოპერატორი', 'შეკვეთის გაცემა', `${ord.orderNo} - საქონელი გაიცა, მარაგი ჩამოიჭრა`);
+    ];
+    const cust = data.customers.find((c) => c.id === ord.customerId);
+    if (cust && ord.balanceDue > 0) {
+      cust.totalDebt = round2(cust.totalDebt + ord.balanceDue);
+      cust.totalPurchased = round2((cust.totalPurchased || 0) + ord.grandTotal);
+      cust.lastPurchaseDate = nowIso;
+      writes.push(store.set('customers', cust));
+    }
+    await Promise.all(writes);
+    await store.logAudit(ord.userId || 'user', ord.userName || 'ოპერატორი', 'შეკვეთის გაცემა', `${ord.orderNo} - საქონელი გაიცა, მარაგი ჩამოიჭრა${ord.balanceDue > 0 ? `, დავალიანება: ${ord.balanceDue} ₾` : ''}`);
     return ord;
   },
 

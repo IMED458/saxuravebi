@@ -84,7 +84,7 @@ export const PrintInvoiceModal: React.FC<Props> = ({ sale, settings, onClose }) 
         </div>
 
         {/* Document Content View */}
-        <div className="p-8 overflow-y-auto bg-slate-100 flex justify-center print:p-0 print:bg-white print:overflow-visible">
+        <div className="print-area p-8 overflow-y-auto bg-slate-100 flex justify-center print:p-0 print:bg-white print:overflow-visible">
           {docType === 'a4' && <A4Invoice sale={sale} settings={settings} />}
           {docType === 'thermal' && <ThermalReceipt sale={sale} settings={settings} />}
           {docType === 'warehouse' && <WarehousePickList sale={sale} settings={settings} />}
@@ -233,7 +233,7 @@ const A4Invoice: React.FC<{ sale: Sale; settings: Settings }> = ({ sale, setting
         </div>
 
         <div>
-          <p className="font-bold text-slate-700 mb-6">იბარა (მყიდველი):</p>
+          <p className="font-bold text-slate-700 mb-6">ჩაიბარა (მყიდველი):</p>
           <div className="border-b border-slate-400 w-full mb-1"></div>
           <p className="text-[10px]">ხელმოწერა / მიღებაზე პასუხისმგებელი</p>
         </div>

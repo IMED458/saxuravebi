@@ -17,29 +17,47 @@ import {
   Filter,
   Check
 } from 'lucide-react';
-import { Order, OrderStatus, PaymentMethod, Settings, Product } from '../types';
+import { Order, OrderStatus, PaymentMethod, Settings, Product, User } from '../types';
+import { Trash2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { formatMoney, formatDate } from '../lib/formatters';
 import { PrintOrderModal } from './PrintOrderModal';
 
 interface Props {
+  user: User;
   orders: Order[];
   products: Product[];
   settings: Settings;
   onRefreshData: () => void;
 }
 
-export const OrdersView: React.FC<Props> = ({ orders, products, settings, onRefreshData }) => {
+const ADMIN_ROLES = ['super_admin', 'owner', 'director', 'administrator'];
+
+export const OrdersView: React.FC<Props> = ({ user, orders, products, settings, onRefreshData }) => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [paymentFilter, setPaymentFilter] = useState<string>('all');
   const [fulfillmentFilter, setFulfillmentFilter] = useState<string>('all');
 
+  const isAdmin = ADMIN_ROLES.includes(user.role);
+
   // Modals
   const [printOrder, setPrintOrder] = useState<Order | null>(null);
-  const [paymentModalOrder, setPaymentModalOrder] = useState<Order | null>(null);
+  const [paymentModalOrderId, setPaymentModalOrderId] = useState<string | null>(null);
   const [fulfillModalOrder, setFulfillModalOrder] = useState<Order | null>(null);
   const [statusModalOrder, setStatusModalOrder] = useState<Order | null>(null);
+
+  const paymentModalOrder = paymentModalOrderId ? orders.find((o) => o.id === paymentModalOrderId) || null : null;
+
+  const handleDeleteOrder = async (o: Order) => {
+    if (!confirm(`ნამდვილად გსურთ შეკვეთის ${o.orderNo} წაშლა? ეს მოქმედება შეუქცევადია.`)) return;
+    try {
+      await api.deleteOrder(o.id, { userId: user.id, userName: `${user.firstName} ${user.lastName}` });
+      onRefreshData();
+    } catch (err: any) {
+      alert('შეცდომა წაშლისას: ' + err.message);
+    }
+  };
 
   // Filtered Orders
   const filteredOrders = orders.filter((o) => {
@@ -235,9 +253,9 @@ export const OrdersView: React.FC<Props> = ({ orders, products, settings, onRefr
                         </button>
 
                         <button
-                          onClick={() => setPaymentModalOrder(o)}
+                          onClick={() => setPaymentModalOrderId(o.id)}
                           className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
-                          title="+ გადახდის დამატება"
+                          title="გადახდები (დამატება / წაშლა)"
                         >
                           <DollarSign className="w-4 h-4" />
                         </button>
@@ -260,6 +278,16 @@ export const OrdersView: React.FC<Props> = ({ orders, products, settings, onRefr
                         >
                           <Filter className="w-4 h-4" />
                         </button>
+
+                        {isAdmin && (
+                          <button
+                            onClick={() => handleDeleteOrder(o)}
+                            className="p-1.5 text-red-500 hover:text-white hover:bg-red-600 rounded-lg transition cursor-pointer"
+                            title="შეკვეთის წაშლა (Admin)"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -275,15 +303,14 @@ export const OrdersView: React.FC<Props> = ({ orders, products, settings, onRefr
         <PrintOrderModal order={printOrder} settings={settings} onClose={() => setPrintOrder(null)} />
       )}
 
-      {/* MODAL: Add Payment */}
+      {/* MODAL: Add / Manage Payments */}
       {paymentModalOrder && (
         <AddPaymentModal
           order={paymentModalOrder}
-          onClose={() => setPaymentModalOrder(null)}
-          onSuccess={() => {
-            onRefreshData();
-            setPaymentModalOrder(null);
-          }}
+          user={user}
+          isAdmin={isAdmin}
+          onClose={() => setPaymentModalOrderId(null)}
+          onRefresh={onRefreshData}
         />
       )}
 
@@ -315,16 +342,34 @@ export const OrdersView: React.FC<Props> = ({ orders, products, settings, onRefr
   );
 };
 
-// Sub-Component: Add Payment Modal
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  cash: '💵 ნაღდი',
+  tbc_card: '💳 TBC',
+  bog_card: '💳 BOG',
+  tbc_transfer: '🏦 TBC გადარიცხვა',
+  bog_transfer: '🏦 BOG გადარიცხვა',
+  bank_transfer: '🏦 სხვა გადარიცხვა',
+  debt: '📝 დავალიანება',
+  // legacy values
+  bog: '💳 BOG',
+  tbc: '💳 TBC',
+  transfer: '🏦 გადარიცხვა'
+};
+
+// Sub-Component: Add / Manage Payments Modal
 const AddPaymentModal: React.FC<{
   order: Order;
+  user: User;
+  isAdmin: boolean;
   onClose: () => void;
-  onSuccess: () => void;
-}> = ({ order, onClose, onSuccess }) => {
+  onRefresh: () => void;
+}> = ({ order, user, isAdmin, onClose, onRefresh }) => {
   const [amount, setAmount] = useState<number>(order.balanceDue > 0 ? order.balanceDue : 0);
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [comment, setComment] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const actor = { userId: user.id, userName: `${user.firstName} ${user.lastName}` };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -332,15 +377,11 @@ const AddPaymentModal: React.FC<{
       alert('გთხოვთ შეიყვანოთ ვალიდური თანხა');
       return;
     }
-
     setLoading(true);
     try {
-      await api.addOrderPayment(order.id, {
-        amount,
-        method,
-        comment
-      });
-      onSuccess();
+      await api.addOrderPayment(order.id, { amount, method, comment, ...actor });
+      setComment('');
+      onRefresh();
     } catch (err: any) {
       alert('შეცდომა გადახდის დამატებისას: ' + err.message);
     } finally {
@@ -348,13 +389,28 @@ const AddPaymentModal: React.FC<{
     }
   };
 
+  const handleDeletePayment = async (paymentId: string) => {
+    if (!confirm('ნამდვილად წავშალოთ ეს გადახდა? თანხები და დავალიანება ავტომატურად გადაითვლება.')) return;
+    try {
+      await api.deleteOrderPayment(order.id, paymentId, actor);
+      onRefresh();
+    } catch (err: any) {
+      alert('შეცდომა გადახდის წაშლისას: ' + err.message);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
-        <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-          <DollarSign className="w-5 h-5 text-emerald-600" />
-          გადახდის მიღება შეკვეთაზე: <span className="text-blue-700">{order.orderNo}</span>
-        </h3>
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 my-8">
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <DollarSign className="w-5 h-5 text-emerald-600" />
+            გადახდები: <span className="text-blue-700">{order.orderNo}</span>
+          </h3>
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-1">
           <div className="flex justify-between">
@@ -362,75 +418,107 @@ const AddPaymentModal: React.FC<{
             <span className="font-bold">{formatMoney(order.grandTotal)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-slate-500">უკვე გადახდილი:</span>
+            <span className="text-slate-500">გადახდილია:</span>
             <span className="font-bold text-emerald-700">{formatMoney(order.paidAmount)}</span>
           </div>
           <div className="flex justify-between font-bold">
-            <span className="text-slate-700">დარჩენილი დავალიანება:</span>
+            <span className="text-slate-700">დარჩენილი გადასახდელი:</span>
             <span className="text-red-600">{formatMoney(order.balanceDue)}</span>
+          </div>
+          <div className="flex justify-between pt-1 border-t border-slate-200">
+            <span className="text-slate-500">გადახდის სტატუსი:</span>
+            <span className="font-bold text-slate-800">
+              {order.paymentStatus === 'fully_paid' ? 'სრულად გადახდილი' : order.paymentStatus === 'partially_paid' ? 'ნაწილობრივ გადახდილი' : 'გადაუხდელი'}
+            </span>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-3 text-xs">
-          <div>
-            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">გადახდის თანხა (₾) *</label>
-            <input
-              type="number"
-              step="any"
-              required
-              max={order.balanceDue > 0 ? order.balanceDue : undefined}
-              value={amount}
-              onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
-              className="w-full border border-slate-300 rounded-xl p-2.5 font-bold outline-none text-base text-emerald-700"
-            />
+        {/* Payments history with delete */}
+        {order.payments && order.payments.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">გადახდების ისტორია</div>
+            {order.payments.map((p) => (
+              <div key={p.id} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs">
+                <div>
+                  <span className="font-bold text-emerald-700">{formatMoney(p.amount)}</span>
+                  <span className="text-slate-500 ml-2">{PAYMENT_METHOD_LABELS[p.method] || p.method}</span>
+                  <span className="text-slate-400 ml-2 text-[10px]">{formatDate(p.date)}</span>
+                </div>
+                {isAdmin && (
+                  <button onClick={() => handleDeletePayment(p.id)} className="p-1 text-red-500 hover:bg-red-50 rounded cursor-pointer" title="გადახდის წაშლა">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
+        )}
 
-          <div>
-            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">გადახდის მეთოდი *</label>
-            <select
-              value={method}
-              onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-              className="w-full border border-slate-300 rounded-xl p-2.5 font-semibold outline-none"
-            >
-              <option value="cash">💵 ნაღდი ანგარიშსწორება</option>
-              <option value="bog">🏛️ საქართველოს ბანკი (BOG)</option>
-              <option value="tbc">🏦 თიბისი ბანკი (TBC)</option>
-              <option value="transfer">💳 საბანკო გადარიცხვა</option>
-            </select>
-          </div>
+        {order.balanceDue > 0 ? (
+          <form onSubmit={handleSubmit} className="space-y-3 text-xs border-t border-slate-200 pt-3">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">+ ახალი გადახდა</div>
+            <div>
+              <div className="flex items-center justify-between mb-0.5">
+                <label className="block text-[10px] font-bold text-slate-500">ახლა გადასახდელი თანხა (₾) *</label>
+                <button type="button" onClick={() => setAmount(order.balanceDue)} className="text-[10px] font-bold text-blue-600 hover:text-blue-700 cursor-pointer">
+                  სრული დარჩენილი ({formatMoney(order.balanceDue)})
+                </button>
+              </div>
+              <input
+                type="number"
+                step="any"
+                required
+                value={amount}
+                onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
+                className="w-full border border-slate-300 rounded-xl p-2.5 font-bold outline-none text-base text-emerald-700 focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
 
-          <div>
-            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">კომენტარი / შენიშვნა</label>
-            <input
-              type="text"
-              placeholder="მაგ: ჩარიცხვა ტერმინალით..."
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              className="w-full border border-slate-300 rounded-xl p-2.5 outline-none"
-            />
-          </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">გადახდის მეთოდი *</label>
+              <select
+                value={method}
+                onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+                className="w-full border border-slate-300 rounded-xl p-2.5 font-semibold outline-none"
+              >
+                <option value="cash">💵 ნაღდი</option>
+                <option value="tbc_card">💳 TBC</option>
+                <option value="bog_card">💳 BOG</option>
+                <option value="tbc_transfer">🏦 TBC გადარიცხვა</option>
+                <option value="bog_transfer">🏦 BOG გადარიცხვა</option>
+                <option value="bank_transfer">🏦 სხვა გადარიცხვა</option>
+              </select>
+            </div>
 
-          <div className="flex gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold cursor-pointer"
-            >
-              გაუქმება
-            </button>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">კომენტარი / შენიშვნა</label>
+              <input
+                type="text"
+                placeholder="მაგ: ჩარიცხვა ტერმინალით..."
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                className="w-full border border-slate-300 rounded-xl p-2.5 outline-none"
+              />
+            </div>
+
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer"
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer disabled:opacity-60"
             >
-              გადახდის შენახვა
+              {loading ? 'ინახება...' : 'გადახდის დამატება'}
             </button>
+          </form>
+        ) : (
+          <div className="text-center py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-xs font-bold">
+            ✓ შეკვეთა სრულად გადახდილია
           </div>
-        </form>
+        )}
       </div>
     </div>
   );
 };
+
 
 // Sub-Component: Fulfill Order Modal
 const FulfillOrderModal: React.FC<{

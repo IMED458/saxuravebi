@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Menu,
   LayoutDashboard,
   ShoppingCart,
   Package,
@@ -43,6 +44,26 @@ interface MenuItem {
 
 export const Sidebar: React.FC<Props> = ({ activePage, onNavigate, user }) => {
   const [openSection, setOpenSection] = useState<string | null>('sales');
+  // Collapsed state is a UI preference (not business data), remembered locally.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('sidebar_collapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('sidebar_collapsed', next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
 
   const menu: MenuItem[] = [
     { id: 'dashboard', label: 'მთავარი', icon: LayoutDashboard },
@@ -157,35 +178,53 @@ export const Sidebar: React.FC<Props> = ({ activePage, onNavigate, user }) => {
   };
 
   return (
-    <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col h-[calc(100vh-4rem)] sticky top-16 select-none overflow-y-auto">
-      <div className="p-3 space-y-1">
+    <aside
+      className={`${
+        collapsed ? 'w-16' : 'w-64'
+      } bg-slate-900 border-r border-slate-800 flex flex-col h-[calc(100vh-4rem)] sticky top-16 select-none overflow-y-auto transition-[width] duration-200`}
+    >
+      {/* Collapse toggle */}
+      <button
+        onClick={toggleCollapsed}
+        title={collapsed ? 'მენიუს გაშლა' : 'მენიუს შეკეცვა'}
+        className="m-2 p-2 rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white transition cursor-pointer flex items-center justify-center"
+      >
+        <Menu className="w-5 h-5" />
+      </button>
+
+      <div className="px-3 pb-3 space-y-1">
         {menu.map((item) => {
           const Icon = item.icon;
           const hasChildren = item.children && item.children.length > 0;
           const isOpen = openSection === item.id;
           const isDirectActive = activePage === item.id;
+          const childActive = hasChildren && item.children!.some((c) => c.id === activePage);
 
           return (
             <div key={item.id} className="space-y-1">
               <button
+                title={item.label}
                 onClick={() => {
-                  if (hasChildren) {
+                  if (collapsed) {
+                    // Collapsed: jump straight to the section (or its first page).
+                    onNavigate(hasChildren ? item.children![0].id : item.id);
+                  } else if (hasChildren) {
                     toggleSection(item.id);
                   } else {
                     onNavigate(item.id);
                   }
                 }}
                 className={`w-full px-3 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition cursor-pointer ${
-                  isDirectActive
+                  isDirectActive || (collapsed && childActive)
                     ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
                     : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                }`}
+                } ${collapsed ? 'justify-center' : ''}`}
               >
-                <div className="flex items-center gap-2.5">
-                  <Icon className={`w-4 h-4 ${isDirectActive ? 'text-white' : 'text-slate-400'}`} />
-                  <span>{item.label}</span>
+                <div className={`flex items-center gap-2.5 ${collapsed ? 'justify-center' : ''}`}>
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isDirectActive ? 'text-white' : 'text-slate-400'}`} />
+                  {!collapsed && <span>{item.label}</span>}
                 </div>
-                {hasChildren && (
+                {!collapsed && hasChildren && (
                   <div>
                     {isOpen ? (
                       <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
@@ -197,7 +236,7 @@ export const Sidebar: React.FC<Props> = ({ activePage, onNavigate, user }) => {
               </button>
 
               {/* Submenu Children */}
-              {hasChildren && isOpen && (
+              {!collapsed && hasChildren && isOpen && (
                 <div className="pl-4 border-l border-slate-800 ml-3 space-y-1 py-1">
                   {item.children!.map((child) => {
                     const ChildIcon = child.icon;

@@ -198,6 +198,7 @@ export const App: React.FC = () => {
 
           {activePage === 'orders' && (
             <OrdersView
+              user={currentUser}
               orders={orders}
               products={products}
               settings={settings}

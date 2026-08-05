@@ -554,12 +554,44 @@ export const POSView: React.FC<Props> = ({
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <div className="flex items-center justify-between mt-1.5 text-[11px]">
-                      <span className="text-slate-600 font-semibold">
-                        {formatNum(item.quantity)} {item.product.unit} ×{' '}
-                        <span className={isModified ? 'text-amber-600 font-bold' : ''}>{formatMoney(item.customPrice)}</span>
-                      </span>
-                      <span className="text-sm font-extrabold text-blue-700">{formatMoney(item.lineTotal)}</span>
+                    <div className="flex items-center justify-between gap-2 mt-2">
+                      <div className="flex items-center gap-1.5">
+                        <div className="flex flex-col">
+                          <span className="text-[8px] font-bold text-slate-400 uppercase leading-none mb-0.5">რაოდ.</span>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              value={item.quantity}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => updateQuantity(idx, parseFloat(e.target.value) || 0)}
+                              className="w-16 py-1 px-1.5 text-center text-xs font-bold bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                            />
+                            <span className="text-[10px] text-slate-500 font-semibold">{item.product.unit}</span>
+                          </div>
+                        </div>
+                        <span className="text-slate-300 mt-3">×</span>
+                        <div className="flex flex-col">
+                          <span className="text-[8px] font-bold text-slate-400 uppercase leading-none mb-0.5">ფასი (₾)</span>
+                          <input
+                            type="number"
+                            step="any"
+                            min="0"
+                            value={item.customPrice}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => updateCustomPrice(idx, parseFloat(e.target.value) || 0)}
+                            className={`w-20 py-1 px-1.5 text-center text-xs font-bold bg-white border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none ${
+                              isModified ? 'border-amber-500 text-amber-700 bg-amber-50' : 'border-slate-300 text-slate-900'
+                            }`}
+                            title={isModified ? `სტანდარტული ფასი: ${formatMoney(item.product.sellingPrice)}` : ''}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase leading-none mb-0.5">ჯამი</span>
+                        <span className="text-sm font-extrabold text-blue-700">{formatMoney(item.lineTotal)}</span>
+                      </div>
                     </div>
                   </div>
                 );

@@ -1,1 +1,56 @@
 @import "tailwindcss";
+
+/*
+ * Print rules — a real print template, not a screenshot of the app.
+ * Everything is hidden on print except the element marked `.print-area`
+ * (the A4 invoice / order document). Sidebar, buttons, menus and the modal
+ * chrome never appear on paper.
+ */
+@media print {
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* Hide the whole app… */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* …then reveal only the print document and its contents. */
+  .print-area,
+  .print-area * {
+    visibility: visible !important;
+  }
+
+  .print-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* Long documents flow onto multiple pages cleanly. */
+  .print-area table {
+    width: 100%;
+  }
+  .print-area thead {
+    display: table-header-group; /* repeat header on each page */
+  }
+  .print-area tr,
+  .print-area td,
+  .print-area th {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}

@@ -9,6 +9,7 @@ import {
   Edit,
   Eye,
   Pencil,
+  ImageIcon,
   TrendingUp,
   AlertTriangle,
   Boxes,
@@ -837,6 +838,8 @@ const AddProductModal: React.FC<{
   const [supplierId, setSupplierId] = useState<string>(editProduct?.supplierId || '');
   const [barcode, setBarcode] = useState(editProduct?.barcode || '');
   const [comment, setComment] = useState(editProduct?.description || editProduct?.note || '');
+  const [imageUrl, setImageUrl] = useState(editProduct?.image || '');
+  const [imgError, setImgError] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -850,12 +853,12 @@ const AddProductModal: React.FC<{
     try {
       if (isEdit) {
         await api.updateProduct(editProduct!.id, {
-          name, code, categoryId, unit, sellingPrice, minStock, supplierId, barcode, description: comment
+          name, code, categoryId, unit, sellingPrice, minStock, supplierId, barcode, description: comment, image: imageUrl.trim()
         });
       } else {
         await api.createProduct({
           name, code, categoryId, unit, sellingPrice, minStock,
-          initialStock, initialCostPrice, supplierId, barcode, comment
+          initialStock, initialCostPrice, supplierId, barcode, comment, image: imageUrl.trim()
         });
       }
       onSuccess();
@@ -1021,6 +1024,28 @@ const AddProductModal: React.FC<{
                 className="w-full border border-slate-300 rounded-xl p-2.5 outline-none font-mono"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">ფოტოს ბმული / URL</label>
+            <div className="flex gap-2 items-start">
+              <input
+                type="url"
+                placeholder="https://... (საჯარო HTTPS ფოტოს ბმული)"
+                value={imageUrl}
+                onChange={(e) => { setImageUrl(e.target.value); setImgError(false); }}
+                className="flex-1 border border-slate-300 rounded-xl p-2.5 outline-none font-mono text-[11px] focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="w-14 h-14 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                {imageUrl && !imgError ? (
+                  <img src={imageUrl} alt="preview" className="w-full h-full object-cover" onError={() => setImgError(true)} />
+                ) : (
+                  <ImageIcon className="w-5 h-5 text-slate-300" />
+                )}
+              </div>
+            </div>
+            {imgError && <p className="text-[10px] text-red-500 mt-1">ფოტოს ბმული ვერ ჩაიტვირთა.</p>}
+            <p className="text-[10px] text-slate-400 mt-1">ფოტო ცალკე არ ინახება — ინახება მხოლოდ ბმული. სავალდებულო არ არის.</p>
           </div>
 
           <div>
