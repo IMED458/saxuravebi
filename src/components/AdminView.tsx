@@ -8,6 +8,7 @@ interface Props {
   users: User[];
   settings: Settings;
   onRefreshData: () => void;
+  activePage?: string;
 }
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -73,8 +74,14 @@ function defaultPermsForRole(role: UserRole): UserPermission[] {
   }
 }
 
-export const AdminView: React.FC<Props> = ({ user, users, settings, onRefreshData }) => {
+export const AdminView: React.FC<Props> = ({ user, users, settings, onRefreshData, activePage }) => {
   const [activeTab, setActiveTab] = useState<'users' | 'audit' | 'settings'>('users');
+
+  useEffect(() => {
+    if (activePage === 'users_admin') setActiveTab('users');
+    else if (activePage === 'audit_logs') setActiveTab('audit');
+    else if (activePage === 'settings') setActiveTab('settings');
+  }, [activePage]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);

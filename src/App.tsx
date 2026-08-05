@@ -16,6 +16,7 @@ import { ReportsAccountingView } from './components/ReportsAccountingView';
 import { AdminView } from './components/AdminView';
 import { OrdersView } from './components/OrdersView';
 import { PrintInvoiceModal } from './components/PrintInvoiceModal';
+import { PrintOrderModal } from './components/PrintOrderModal';
 
 export const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -49,6 +50,7 @@ export const App: React.FC = () => {
 
   // Modal print target
   const [printSale, setPrintSale] = useState<Sale | null>(null);
+  const [printOrder, setPrintOrder] = useState<Order | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(false);
 
   // Load all master data
@@ -150,6 +152,7 @@ export const App: React.FC = () => {
               categories={categories}
               units={units}
               onSaleCompleted={(s) => setPrintSale(s)}
+              onOrderCompleted={(o) => setPrintOrder(o)}
               onRefreshData={loadData}
             />
           )}
@@ -164,6 +167,7 @@ export const App: React.FC = () => {
               units={units}
               suppliers={suppliers}
               onRefreshData={loadData}
+              activePage={activePage}
             />
           )}
 
@@ -173,7 +177,7 @@ export const App: React.FC = () => {
             activePage === 'stocktakes' ||
             activePage === 'stock_transfers' ||
             activePage === 'low_stock') && (
-            <StockView products={products} onRefreshData={loadData} />
+            <StockView products={products} onRefreshData={loadData} activePage={activePage} />
           )}
 
           {(activePage === 'suppliers_list' || activePage === 'supplier_debts') && (
@@ -189,7 +193,7 @@ export const App: React.FC = () => {
             activePage === 'held_sales' ||
             activePage === 'returns' ||
             activePage === 'quotes') && (
-            <SalesHistoryView sales={sales} settings={settings} onRefreshData={loadData} />
+            <SalesHistoryView sales={sales} settings={settings} onRefreshData={loadData} activePage={activePage} />
           )}
 
           {activePage === 'orders' && (
@@ -211,6 +215,7 @@ export const App: React.FC = () => {
               shifts={shifts}
               expenses={expenses}
               onRefreshData={loadData}
+              activePage={activePage}
             />
           )}
 
@@ -224,7 +229,7 @@ export const App: React.FC = () => {
           )}
 
           {(activePage === 'users_admin' || activePage === 'audit_logs' || activePage === 'settings') && (
-            <AdminView user={currentUser} users={users} settings={settings} onRefreshData={loadData} />
+            <AdminView user={currentUser} users={users} settings={settings} onRefreshData={loadData} activePage={activePage} />
           )}
 
           {(activePage === 'purchase_new' || activePage === 'purchases_history') && (
@@ -248,6 +253,10 @@ export const App: React.FC = () => {
       {/* Print / View Invoice Modal */}
       {printSale && (
         <PrintInvoiceModal sale={printSale} settings={settings} onClose={() => setPrintSale(null)} />
+      )}
+
+      {printOrder && (
+        <PrintOrderModal order={printOrder} settings={settings} onClose={() => setPrintOrder(null)} />
       )}
     </div>
   );

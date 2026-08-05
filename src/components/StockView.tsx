@@ -7,12 +7,19 @@ import { formatMoney, formatDate } from '../lib/formatters';
 interface Props {
   products: Product[];
   onRefreshData: () => void;
+  activePage?: string;
 }
 
-export const StockView: React.FC<Props> = ({ products, onRefreshData }) => {
+export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage }) => {
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [activeTab, setActiveTab] = useState<'current' | 'low' | 'movements'>('current');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (activePage === 'low_stock') setActiveTab('low');
+    else if (activePage === 'stock_movements') setActiveTab('movements');
+    else if (activePage === 'stock_list' || activePage === 'stock_intake' || activePage === 'stocktakes' || activePage === 'stock_transfers') setActiveTab('current');
+  }, [activePage]);
 
   useEffect(() => {
     loadMovements();

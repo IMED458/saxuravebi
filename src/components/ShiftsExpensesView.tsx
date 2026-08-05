@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Clock, Wallet, DollarSign, AlertCircle, CheckCircle2, ArrowDownRight, ArrowUpRight } from 'lucide-react';
 import { Shift, Expense, User } from '../types';
 import { api } from '../lib/api';
@@ -10,6 +10,7 @@ interface Props {
   shifts: Shift[];
   expenses: Expense[];
   onRefreshData: () => void;
+  activePage?: string;
 }
 
 export const ShiftsExpensesView: React.FC<Props> = ({
@@ -17,12 +18,18 @@ export const ShiftsExpensesView: React.FC<Props> = ({
   currentShift,
   shifts,
   expenses,
-  onRefreshData
+  onRefreshData,
+  activePage
 }) => {
   const [showOpenModal, setShowOpenModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showCashInModal, setShowCashInModal] = useState(false);
+
+  useEffect(() => {
+    if (activePage === 'cash_out') setShowExpenseModal(true);
+    else if (activePage === 'cash_in') setShowCashInModal(true);
+  }, [activePage]);
 
   return (
     <div className="space-y-6">

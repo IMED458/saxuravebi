@@ -10,16 +10,30 @@ interface Props {
   sales: Sale[];
   settings: Settings;
   onRefreshData: () => void;
+  activePage?: string;
 }
 
-export const SalesHistoryView: React.FC<Props> = ({ sales, settings, onRefreshData }) => {
+const SECTION_TITLES: Record<string, string> = {
+  sales_history: 'გაყიდვების ისტორია',
+  invoices: 'ინვოისები',
+  held_sales: 'შეჩერებული გაყიდვები',
+  returns: 'დაბრუნებები',
+  quotes: 'ფასის შეთავაზებები'
+};
+
+export const SalesHistoryView: React.FC<Props> = ({ sales, settings, onRefreshData, activePage = 'sales_history' }) => {
   const [search, setSearch] = useState('');
   const [selectedSaleForPrint, setSelectedSaleForPrint] = useState<Sale | null>(null);
   const [showReturnModal, setShowReturnModal] = useState<Sale | null>(null);
 
-  const completedSales = sales.filter((s) => !s.isHeld);
+  const baseSales =
+    activePage === 'held_sales'
+      ? sales.filter((s) => s.isHeld)
+      : activePage === 'returns'
+      ? sales.filter((s) => s.status === 'returned')
+      : sales.filter((s) => !s.isHeld);
 
-  const filtered = completedSales.filter((s) => {
+  const filtered = baseSales.filter((s) => {
     const q = search.toLowerCase();
     return (
       s.invoiceNo.toLowerCase().includes(q) ||
@@ -46,8 +60,8 @@ export const SalesHistoryView: React.FC<Props> = ({ sales, settings, onRefreshDa
     <div className="space-y-6">
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight">გაყიდვების ისტორია & ინვოისები</h1>
-          <p className="text-xs text-slate-500 mt-0.5">სულ შესრულებულია: {completedSales.length} გაყიდვა</p>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">{SECTION_TITLES[activePage] || 'გაყიდვების ისტორია'}</h1>
+          <p className="text-xs text-slate-500 mt-0.5">სულ ჩანაწერი: {baseSales.length}</p>
         </div>
 
         <button

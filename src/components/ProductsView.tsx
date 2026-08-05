@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Search,
   Plus,
@@ -8,6 +8,7 @@ import {
   FileSpreadsheet,
   Edit,
   Eye,
+  Pencil,
   TrendingUp,
   AlertTriangle,
   Boxes,
@@ -26,7 +27,7 @@ interface Props {
   units: Unit[];
   suppliers: Supplier[];
   onRefreshData: () => void;
-  onNavigateAddProduct?: () => void;
+  activePage?: string;
 }
 
 export const ProductsView: React.FC<Props> = ({
@@ -34,7 +35,8 @@ export const ProductsView: React.FC<Props> = ({
   categories,
   units,
   suppliers,
-  onRefreshData
+  onRefreshData,
+  activePage = 'products_list'
 }) => {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -42,9 +44,16 @@ export const ProductsView: React.FC<Props> = ({
 
   // Modals
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [showAddStockModal, setShowAddStockModal] = useState<Product | null>(null);
   const [showBulkPriceModal, setShowBulkPriceModal] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
+
+  // React to sidebar sub-navigation so each menu item does something visible.
+  useEffect(() => {
+    if (activePage === 'product_add') setShowAddProductModal(true);
+    else if (activePage === 'price_management') setShowBulkPriceModal(true);
+  }, [activePage]);
 
   // Filtered Products
   const filteredProducts = products.filter((p) => {
@@ -77,6 +86,10 @@ export const ProductsView: React.FC<Props> = ({
     }));
     exportToExcel(exportData, 'პროდუქტები_მარაგები');
   };
+
+  if (activePage === 'categories') {
+    return <CategoriesManager categories={categories} products={products} onRefreshData={onRefreshData} />;
+  }
 
   return (
     <div className="space-y-6">
@@ -244,6 +257,13 @@ export const ProductsView: React.FC<Props> = ({
                             <Eye className="w-4 h-4" />
                           </button>
                           <button
+                            onClick={() => setEditProduct(p)}
+                            className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition cursor-pointer"
+                            title="რედაქტირება"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
                             onClick={() => setShowAddStockModal(p)}
                             className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition cursor-pointer font-bold text-xs flex items-center gap-1"
                             title="მარაგის დამატება"
@@ -313,6 +333,94 @@ export const ProductsView: React.FC<Props> = ({
           }}
         />
       )}
+
+      {/* MODAL: Edit Product Modal */}
+      {editProduct && (
+        <AddProductModal
+          editProduct={editProduct}
+          categories={categories}
+          units={units}
+          suppliers={suppliers}
+          onClose={() => setEditProduct(null)}
+          onSuccess={() => {
+            onRefreshData();
+            setEditProduct(null);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// Sub-Component: Categories Manager
+const CategoriesManager: React.FC<{
+  categories: Category[];
+  products: Product[];
+  onRefreshData: () => void;
+}> = ({ categories, products, onRefreshData }) => {
+  const [name, setName] = useState('');
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setLoading(true);
+    try {
+      await api.createCategory({ name, code });
+      setName('');
+      setCode('');
+      onRefreshData();
+    } catch (err: any) {
+      alert('შეცდომა: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+        <h1 className="text-xl font-bold text-slate-900 tracking-tight">კატეგორიები</h1>
+        <p className="text-xs text-slate-500 mt-0.5">პროდუქტების კატეგორიების მართვა ({categories.length})</p>
+      </div>
+
+      <form onSubmit={handleAdd} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap gap-2 items-end">
+        <div className="flex-1 min-w-[180px]">
+          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">კატეგორიის სახელი *</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="მაგ: სანტექნიკა" className="w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <div className="w-32">
+          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">კოდი</label>
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="SANT" className="w-full border border-slate-300 rounded-xl p-2.5 text-xs font-mono outline-none" />
+        </div>
+        <button type="submit" disabled={loading} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer disabled:opacity-60">
+          + დამატება
+        </button>
+      </form>
+
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <table className="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
+              <th className="p-3">კოდი</th>
+              <th className="p-3">დასახელება</th>
+              <th className="p-3 text-center">პროდუქტების რაოდენობა</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200 font-medium">
+            {categories.map((c) => (
+              <tr key={c.id} className="hover:bg-slate-50">
+                <td className="p-3 font-mono font-bold text-blue-700">{c.code}</td>
+                <td className="p-3 font-bold text-slate-900">{c.name}</td>
+                <td className="p-3 text-center font-semibold text-slate-600">
+                  {products.filter((p) => p.categoryId === c.id).length}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 };
@@ -708,25 +816,27 @@ const BulkPriceModal: React.FC<{
   );
 };
 
-// Sub-Component: Add New Product Modal
+// Sub-Component: Add / Edit Product Modal
 const AddProductModal: React.FC<{
   categories: Category[];
   units: Unit[];
   suppliers: Supplier[];
   onClose: () => void;
   onSuccess: () => void;
-}> = ({ categories, units, suppliers, onClose, onSuccess }) => {
-  const [name, setName] = useState('');
-  const [code, setCode] = useState('');
-  const [categoryId, setCategoryId] = useState(categories[0]?.id || '');
-  const [unit, setUnit] = useState(units[0]?.name || 'ცალი');
-  const [sellingPrice, setSellingPrice] = useState<number>(0);
-  const [minStock, setMinStock] = useState<number>(5);
+  editProduct?: Product;
+}> = ({ categories, units, suppliers, onClose, onSuccess, editProduct }) => {
+  const isEdit = !!editProduct;
+  const [name, setName] = useState(editProduct?.name || '');
+  const [code, setCode] = useState(editProduct?.code || '');
+  const [categoryId, setCategoryId] = useState(editProduct?.categoryId || categories[0]?.id || '');
+  const [unit, setUnit] = useState(editProduct?.unit || units[0]?.name || 'ცალი');
+  const [sellingPrice, setSellingPrice] = useState<number>(editProduct?.sellingPrice || 0);
+  const [minStock, setMinStock] = useState<number>(editProduct?.minStock ?? 5);
   const [initialStock, setInitialStock] = useState<number>(0);
   const [initialCostPrice, setInitialCostPrice] = useState<number>(0);
-  const [supplierId, setSupplierId] = useState<string>('');
-  const [barcode, setBarcode] = useState('');
-  const [comment, setComment] = useState('');
+  const [supplierId, setSupplierId] = useState<string>(editProduct?.supplierId || '');
+  const [barcode, setBarcode] = useState(editProduct?.barcode || '');
+  const [comment, setComment] = useState(editProduct?.description || editProduct?.note || '');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -738,22 +848,19 @@ const AddProductModal: React.FC<{
 
     setLoading(true);
     try {
-      await api.createProduct({
-        name,
-        code,
-        categoryId,
-        unit,
-        sellingPrice,
-        minStock,
-        initialStock,
-        initialCostPrice,
-        supplierId,
-        barcode,
-        comment
-      });
+      if (isEdit) {
+        await api.updateProduct(editProduct!.id, {
+          name, code, categoryId, unit, sellingPrice, minStock, supplierId, barcode, description: comment
+        });
+      } else {
+        await api.createProduct({
+          name, code, categoryId, unit, sellingPrice, minStock,
+          initialStock, initialCostPrice, supplierId, barcode, comment
+        });
+      }
       onSuccess();
     } catch (err: any) {
-      alert('შეცდომა პროდუქტის დამატებისას: ' + err.message);
+      alert('შეცდომა პროდუქტის შენახვისას: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -765,7 +872,7 @@ const AddProductModal: React.FC<{
         <div className="flex items-center justify-between border-b border-slate-200 pb-3">
           <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
             <Package className="w-5 h-5 text-blue-600" />
-            ახალი პროდუქტის რეგისტრაცია
+            {isEdit ? 'პროდუქტის რედაქტირება' : 'ახალი პროდუქტის რეგისტრაცია'}
           </h3>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer">
             <X className="w-5 h-5" />
@@ -837,7 +944,7 @@ const AddProductModal: React.FC<{
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+          <div className={`grid grid-cols-1 ${isEdit ? '' : 'sm:grid-cols-3'} gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200`}>
             <div>
               <label className="block text-[10px] font-bold text-slate-700 mb-0.5">გასაყიდი ფასი (₾) *</label>
               <input
@@ -850,27 +957,31 @@ const AddProductModal: React.FC<{
               />
             </div>
 
-            <div>
-              <label className="block text-[10px] font-bold text-slate-700 mb-0.5">საწყისი ასაღები ფასი (₾)</label>
-              <input
-                type="number"
-                step="any"
-                value={initialCostPrice}
-                onChange={(e) => setInitialCostPrice(parseFloat(e.target.value) || 0)}
-                className="w-full bg-white border border-slate-300 rounded-xl p-2 font-bold outline-none text-sm"
-              />
-            </div>
+            {!isEdit && (
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 mb-0.5">საწყისი ასაღები ფასი (₾)</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={initialCostPrice}
+                  onChange={(e) => setInitialCostPrice(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-white border border-slate-300 rounded-xl p-2 font-bold outline-none text-sm"
+                />
+              </div>
+            )}
 
-            <div>
-              <label className="block text-[10px] font-bold text-slate-700 mb-0.5">საწყისი ნაშთი/მარაგი</label>
-              <input
-                type="number"
-                step="any"
-                value={initialStock}
-                onChange={(e) => setInitialStock(parseFloat(e.target.value) || 0)}
-                className="w-full bg-white border border-slate-300 rounded-xl p-2 font-bold text-emerald-700 outline-none text-sm"
-              />
-            </div>
+            {!isEdit && (
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 mb-0.5">საწყისი ნაშთი/მარაგი</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={initialStock}
+                  onChange={(e) => setInitialStock(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-white border border-slate-300 rounded-xl p-2 font-bold text-emerald-700 outline-none text-sm"
+                />
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -936,7 +1047,7 @@ const AddProductModal: React.FC<{
               disabled={loading}
               className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer"
             >
-              დამატება & შენახვა
+              {isEdit ? 'ცვლილების შენახვა' : 'დამატება & შენახვა'}
             </button>
           </div>
         </form>

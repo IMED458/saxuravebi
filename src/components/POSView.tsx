@@ -18,7 +18,7 @@ import {
   Info,
   FileText
 } from 'lucide-react';
-import { Product, Customer, Sale, User, PaymentMethod, Category, Unit } from '../types';
+import { Product, Customer, Sale, User, PaymentMethod, Category, Unit, Order } from '../types';
 import { api } from '../lib/api';
 import { formatMoney, formatNum } from '../lib/formatters';
 
@@ -36,6 +36,7 @@ interface Props {
   categories: Category[];
   units: Unit[];
   onSaleCompleted: (sale: Sale) => void;
+  onOrderCompleted?: (order: Order) => void;
   onRefreshData: () => void;
 }
 
@@ -46,6 +47,7 @@ export const POSView: React.FC<Props> = ({
   categories,
   units,
   onSaleCompleted,
+  onOrderCompleted,
   onRefreshData
 }) => {
   // Selected Customer
@@ -302,8 +304,10 @@ export const POSView: React.FC<Props> = ({
       };
 
       const createdOrder = await api.createOrder(orderData);
-      alert(`შეკვეთა N ${createdOrder.orderNo} წარმატებით დარეგისტრირდა! (მარაგი არ ჩამოჭრილა)`);
       onRefreshData();
+
+      // Open the print panel for the order (same behaviour as a completed sale).
+      if (onOrderCompleted) onOrderCompleted(createdOrder);
 
       // Reset cart
       setCart([]);
