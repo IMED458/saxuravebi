@@ -246,6 +246,9 @@ export interface Sale {
   payments: SalePayment[];
   holdNote?: string;
   isHeld?: boolean;
+  isAnonymous?: boolean;
+  sourceOrderId?: string;
+  receivedByName?: string;
   createdAt: string;
 }
 

@@ -702,9 +702,9 @@ export const api = {
       return heldSale;
     }
 
-    if (!customerId) throw new Error('კლიენტის არჩევა სავალდებულოა!');
-    const customer = data.customers.find((c) => c.id === customerId);
-    if (!customer) throw new Error('არჩეული კლიენტი ვერ მოიძებნა');
+    // Customer is OPTIONAL — a sale with no customer is recorded as anonymous.
+    const customer = customerId ? data.customers.find((c) => c.id === customerId) : null;
+    if (customerId && !customer) throw new Error('არჩეული კლიენტი ვერ მოიძებნა');
     if (!items || !Array.isArray(items) || items.length === 0) throw new Error('კალათა ცარიელია');
 
     // Pre-validate stock before mutating anything.
@@ -781,7 +781,7 @@ export const api = {
         newStock,
         type: 'sale',
         referenceNo: invoiceNo,
-        note: `გაყიდვა კლიენტზე: ${customer.name}`,
+        note: `გაყიდვა კლიენტზე: ${customer ? customer.name : 'ანონიმური'}`,
         date: nowIso,
         userId: actorId || 'cashier',
         userName: actorName || 'მოლარე'
@@ -808,7 +808,7 @@ export const api = {
             type: 'sale',
             amount: pAmt,
             method: p.method,
-            description: `გაყიდვა #${invoiceNo} (${customer.name})`,
+            description: `გაყიდვა #${invoiceNo} (${customer ? customer.name : 'ანონიმური'})`,
             referenceNo: invoiceNo,
             date: nowIso,
             userId: actorId || 'cashier',
@@ -823,21 +823,25 @@ export const api = {
     const balanceDue = Math.max(0, grandTotal - totalPaid);
     const paymentStatus: 'paid' | 'partial' | 'unpaid' = totalPaid >= grandTotal ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid';
 
-    if (balanceDue > 0) customer.totalDebt += balanceDue;
-    customer.totalPurchased += grandTotal;
-    customer.lastPurchaseDate = nowIso;
+    if (customer) {
+      if (balanceDue > 0) customer.totalDebt += balanceDue;
+      customer.totalPurchased += grandTotal;
+      customer.lastPurchaseDate = nowIso;
+    }
 
-    const customerFullName =
-      customer.type === 'company'
+    const customerFullName = customer
+      ? customer.type === 'company'
         ? customer.companyName || customer.name
-        : `${customer.name} ${customer.lastName || ''}`.trim();
+        : `${customer.name} ${customer.lastName || ''}`.trim()
+      : 'ანონიმური გაყიდვა';
 
     const newSale: Sale = {
       id: uid('sale'),
       invoiceNo,
-      customerId: customer.id,
+      customerId: customer ? customer.id : '',
       customerName: customerFullName,
-      customerPhone: customer.phone,
+      customerPhone: customer ? customer.phone : '',
+      isAnonymous: !customer,
       userId: actorId || 'cashier',
       userName: actorName || 'მოლარე',
       date: nowIso,
@@ -864,7 +868,7 @@ export const api = {
       store.setMany('productBatches', changedBatches),
       store.setMany('stockMovements', newMovements),
       store.setMany('cashTransactions', newTxns),
-      store.set('customers', customer),
+      customer ? store.set('customers', customer) : Promise.resolve(),
       store.set('sales', newSale),
       store.saveCounters()
     ]);

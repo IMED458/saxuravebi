@@ -108,6 +108,7 @@ export const POSView: React.FC<Props> = ({
   const [cashInput, setCashInput] = useState<string>('');
   const [printReceipt, setPrintReceipt] = useState(true);
   const [bankMethod, setBankMethod] = useState<PaymentMethod | null>(null);
+  const [showOrderModal, setShowOrderModal] = useState(false);
 
   useEffect(() => {
     // Focus product search on mount
@@ -191,7 +192,7 @@ export const POSView: React.FC<Props> = ({
   };
 
   const updateQuantity = (index: number, newQty: number) => {
-    if (newQty <= 0) return;
+    if (newQty < 0 || isNaN(newQty)) return;
     const updated = [...cart];
     updated[index].quantity = newQty;
     updated[index].lineTotal = Math.round(newQty * updated[index].customPrice * 100) / 100;
@@ -227,14 +228,9 @@ export const POSView: React.FC<Props> = ({
     }
   }, [grandTotal]);
 
-  // Handle Checkout / Invoice Generation
+  // Handle Checkout / Invoice Generation. Customer is optional (anonymous sale).
   const handleCheckout = async (paymentsArg?: { method: PaymentMethod; amount: number }[]) => {
     setError('');
-
-    if (!selectedCustomer) {
-      setError('კლიენტის არჩევა სავალდებულოა გაყიდვის დასასრულებლად!');
-      return;
-    }
 
     if (cart.length === 0) {
       setError('კალათა ცარიელია, დაამატეთ პროდუქტები.');
@@ -245,7 +241,7 @@ export const POSView: React.FC<Props> = ({
 
     try {
       const saleData = {
-        customerId: selectedCustomer.id,
+        customerId: selectedCustomer?.id,
         items: cart.map((i) => ({
           productId: i.product.id,
           quantity: i.quantity,
@@ -332,12 +328,8 @@ export const POSView: React.FC<Props> = ({
     } else setNumBuffer('');
   };
 
-  // Handle Order Creation (Stock NOT deducted)
-  const handleCreateOrder = async () => {
-    if (!selectedCustomer) {
-      setError('გთხოვთ აირჩიოთ კლიენტი შეკვეთის გასაფორმებლად!');
-      return;
-    }
+  // Handle Order Creation (Stock NOT deducted). Payment is explicit (unpaid by default).
+  const handleCreateOrder = async (paidAmount: number, method: PaymentMethod) => {
     if (cart.length === 0) {
       setError('კალათა ცარიელია, დაამატეთ პროდუქტები.');
       return;
@@ -345,17 +337,18 @@ export const POSView: React.FC<Props> = ({
 
     setLoading(true);
     try {
-      const custName =
-        selectedCustomer.type === 'company'
+      const custName = selectedCustomer
+        ? selectedCustomer.type === 'company'
           ? selectedCustomer.companyName || selectedCustomer.name
-          : `${selectedCustomer.name} ${selectedCustomer.lastName || ''}`.trim();
+          : `${selectedCustomer.name} ${selectedCustomer.lastName || ''}`.trim()
+        : 'ანონიმური კლიენტი';
 
-      const initialPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+      const initialPaid = paidAmount;
 
       const orderData = {
-        customerId: selectedCustomer.id,
+        customerId: selectedCustomer?.id,
         customerName: custName,
-        customerPhone: selectedCustomer.phone,
+        customerPhone: selectedCustomer?.phone,
         items: cart.map((i) => ({
           productId: i.product.id,
           productName: i.product.name,
@@ -366,7 +359,7 @@ export const POSView: React.FC<Props> = ({
           total: i.lineTotal
         })),
         paidAmount: initialPaid,
-        paymentMethod: payments[0]?.method || 'cash',
+        paymentMethod: method,
         deliveryAddress: deliveryType === 'delivery' ? deliveryDetails.address : undefined,
         recipientName: deliveryType === 'delivery' ? deliveryDetails.recipientName : undefined,
         recipientPhone: deliveryType === 'delivery' ? deliveryDetails.recipientPhone : undefined,
@@ -377,6 +370,7 @@ export const POSView: React.FC<Props> = ({
 
       const createdOrder = await api.createOrder(orderData);
       onRefreshData();
+      setShowOrderModal(false);
 
       // Open the print panel for the order (same behaviour as a completed sale).
       if (onOrderCompleted) onOrderCompleted(createdOrder);
@@ -495,7 +489,7 @@ export const POSView: React.FC<Props> = ({
             }}
             className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="">-- აირჩიეთ კლიენტი (სავალდებულოა) --</option>
+            <option value="">👤 კლიენტის გარეშე (ანონიმური)</option>
             {customers.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.type === 'company' ? `🏢 ${c.companyName || c.name}` : `👤 ${c.name} ${c.lastName || ''}`} ({c.phone})
@@ -559,13 +553,11 @@ export const POSView: React.FC<Props> = ({
                         <div className="flex flex-col">
                           <span className="text-[8px] font-bold text-slate-400 uppercase leading-none mb-0.5">რაოდ.</span>
                           <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              step="any"
-                              min="0"
+                            <EditableNumber
                               value={item.quantity}
+                              onChange={(v) => updateQuantity(idx, v)}
+                              placeholder="რაოდ."
                               onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => updateQuantity(idx, parseFloat(e.target.value) || 0)}
                               className="w-16 py-1 px-1.5 text-center text-xs font-bold bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                             />
                             <span className="text-[10px] text-slate-500 font-semibold">{item.product.unit}</span>
@@ -574,13 +566,11 @@ export const POSView: React.FC<Props> = ({
                         <span className="text-slate-300 mt-3">×</span>
                         <div className="flex flex-col">
                           <span className="text-[8px] font-bold text-slate-400 uppercase leading-none mb-0.5">ფასი (₾)</span>
-                          <input
-                            type="number"
-                            step="any"
-                            min="0"
+                          <EditableNumber
                             value={item.customPrice}
+                            onChange={(v) => updateCustomPrice(idx, v)}
+                            placeholder="ფასი"
                             onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => updateCustomPrice(idx, parseFloat(e.target.value) || 0)}
                             className={`w-20 py-1 px-1.5 text-center text-xs font-bold bg-white border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none ${
                               isModified ? 'border-amber-500 text-amber-700 bg-amber-50' : 'border-slate-300 text-slate-900'
                             }`}
@@ -625,7 +615,11 @@ export const POSView: React.FC<Props> = ({
             </button>
           )}
           <button
-            onClick={handleCreateOrder}
+            onClick={() => {
+              if (cart.length === 0) { setError('კალათა ცარიელია'); return; }
+              setError('');
+              setShowOrderModal(true);
+            }}
             disabled={loading || cart.length === 0}
             className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold rounded-lg text-[11px] flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
           >
@@ -633,64 +627,35 @@ export const POSView: React.FC<Props> = ({
           </button>
         </div>
 
-        {/* Total + keypad */}
-        <div className="p-2 border-t border-slate-200 mt-1">
-          <div className="flex items-center justify-between bg-slate-900 text-white rounded-xl px-3 py-2 mb-2">
-            <span className="text-[11px] text-slate-300 font-semibold">სულ გადასახდელი:</span>
-            <span className="text-lg font-extrabold text-emerald-400">{formatMoney(grandTotal)}</span>
+        {/* Totals + checkout (physical keyboard only — no on-screen keypad) */}
+        <div className="p-2.5 border-t border-slate-200 mt-1 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-500 font-semibold">ფასდაკლება (₾):</span>
+            <EditableNumber
+              value={discount}
+              onChange={setDiscount}
+              placeholder="0"
+              className="w-28 text-right bg-slate-50 border border-slate-300 rounded-lg px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
-
-          <div className="grid grid-cols-[4.5rem_1fr_1fr_1fr_6rem] grid-rows-4 gap-1.5" style={{ height: '13rem' }}>
-            {/* mode column */}
-            <button
-              onClick={() => setNumTarget('qty')}
-              className={`rounded-xl text-[11px] font-bold transition cursor-pointer ${numMode === 'qty' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-            >
-              რაოდენობა
-            </button>
-            <button onClick={() => applyNumpad('1')} className={digitBtn}>1</button>
-            <button onClick={() => applyNumpad('2')} className={digitBtn}>2</button>
-            <button onClick={() => applyNumpad('3')} className={digitBtn}>3</button>
-            <button
-              onClick={() => {
-                if (cart.length === 0) { setError('კალათა ცარიელია'); return; }
-                setError('');
-                setShowPayment(true);
-                setCashInput('');
-                setBankMethod(null);
-              }}
-              className="row-span-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl flex flex-col items-center justify-center gap-1 font-extrabold transition cursor-pointer shadow-lg shadow-blue-500/20"
-            >
-              <Printer className="w-5 h-5" />
-              <span className="text-xs">გადახდა</span>
-              <span className="text-[9px] font-medium opacity-80">(გაყიდვა)</span>
-            </button>
-
-            <button
-              onClick={() => setNumTarget('discount')}
-              className={`rounded-xl text-[11px] font-bold transition cursor-pointer ${numMode === 'discount' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-            >
-              ფასდაკლება
-            </button>
-            <button onClick={() => applyNumpad('4')} className={digitBtn}>4</button>
-            <button onClick={() => applyNumpad('5')} className={digitBtn}>5</button>
-            <button onClick={() => applyNumpad('6')} className={digitBtn}>6</button>
-
-            <button
-              onClick={() => setNumTarget('price')}
-              className={`rounded-xl text-[11px] font-bold transition cursor-pointer ${numMode === 'price' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-            >
-              ფასი
-            </button>
-            <button onClick={() => applyNumpad('7')} className={digitBtn}>7</button>
-            <button onClick={() => applyNumpad('8')} className={digitBtn}>8</button>
-            <button onClick={() => applyNumpad('9')} className={digitBtn}>9</button>
-
-            <button onClick={() => applyNumpad('C')} className="bg-red-100 hover:bg-red-200 text-red-700 font-bold rounded-xl transition cursor-pointer">C</button>
-            <button onClick={() => applyNumpad('back')} className={digitBtn}><Delete className="w-4 h-4" /></button>
-            <button onClick={() => applyNumpad('0')} className={digitBtn}>0</button>
-            <button onClick={() => applyNumpad('.')} className={digitBtn}>.</button>
+          <div className="flex items-center justify-between bg-slate-900 text-white rounded-xl px-3 py-2.5">
+            <span className="text-xs text-slate-300 font-semibold">სულ გადასახდელი:</span>
+            <span className="text-xl font-extrabold text-emerald-400">{formatMoney(grandTotal)}</span>
           </div>
+          <button
+            onClick={() => {
+              if (cart.length === 0) { setError('კალათა ცარიელია'); return; }
+              setError('');
+              setShowPayment(true);
+              setCashInput('');
+              setBankMethod(null);
+            }}
+            disabled={loading || cart.length === 0}
+            className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl flex items-center justify-center gap-2 font-extrabold text-sm transition cursor-pointer shadow-lg shadow-blue-500/20 disabled:opacity-50"
+          >
+            <Printer className="w-5 h-5" />
+            გადახდა / გაყიდვის დასრულება
+          </button>
         </div>
       </div>
 
@@ -841,16 +806,18 @@ export const POSView: React.FC<Props> = ({
                   <div className="flex items-stretch border-2 border-blue-500 rounded-xl overflow-hidden">
                     <input
                       type="text"
+                      inputMode="decimal"
                       value={cashInput}
-                      readOnly
-                      placeholder="0.00"
+                      onChange={(e) => setCashInput(e.target.value.replace(/[^0-9.]/g, ''))}
+                      placeholder="შეიყვანეთ თანხა"
+                      autoFocus
                       className="flex-1 px-4 py-3 text-lg font-bold text-slate-900 outline-none"
                     />
                     <button
                       onClick={() => setCashInput(String(grandTotal))}
-                      className="px-4 bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
+                      className="px-4 bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer whitespace-nowrap"
                     >
-                      ზუსტი თანხა
+                      სრული თანხა
                     </button>
                   </div>
                 </div>
@@ -881,26 +848,15 @@ export const POSView: React.FC<Props> = ({
                 </div>
               </div>
 
-              {/* Right: numpad */}
-              <div className="space-y-2">
-                <div className="grid grid-cols-4 gap-2">
-                  {['1', '2', '3'].map((d) => (
-                    <button key={d} onClick={() => pushCash(d)} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">{d}</button>
+              {/* Right: quick cash tender buttons (no on-screen keypad) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">სწრაფი თანხა</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[10, 20, 50, 100, 200, 500].map((n) => (
+                    <button key={n} onClick={() => addCash(n)} className="py-4 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-base font-bold cursor-pointer">+{n}</button>
                   ))}
-                  <button onClick={() => addCash(10)} className="py-4 bg-slate-800 text-white rounded-xl text-sm font-bold cursor-pointer">+10</button>
-                  {['4', '5', '6'].map((d) => (
-                    <button key={d} onClick={() => pushCash(d)} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">{d}</button>
-                  ))}
-                  <button onClick={() => addCash(20)} className="py-4 bg-slate-800 text-white rounded-xl text-sm font-bold cursor-pointer">+20</button>
-                  {['7', '8', '9'].map((d) => (
-                    <button key={d} onClick={() => pushCash(d)} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">{d}</button>
-                  ))}
-                  <button onClick={() => addCash(50)} className="py-4 bg-slate-800 text-white rounded-xl text-sm font-bold cursor-pointer">+50</button>
-                  <button onClick={() => pushCash('back')} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl flex items-center justify-center cursor-pointer"><Delete className="w-5 h-5" /></button>
-                  <button onClick={() => pushCash('0')} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">0</button>
-                  <button onClick={() => pushCash('.')} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">.</button>
-                  <button onClick={() => setCashInput('')} className="py-4 bg-red-100 text-red-700 rounded-xl text-lg font-bold cursor-pointer">C</button>
                 </div>
+                <button onClick={() => setCashInput('')} className="w-full mt-2 py-3 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-sm font-bold cursor-pointer">გასუფთავება</button>
               </div>
             </div>
           </div>
@@ -969,7 +925,135 @@ export const POSView: React.FC<Props> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL: Order payment-status selection (#9-11) */}
+      {showOrderModal && (
+        <OrderPaymentModal
+          grandTotal={grandTotal}
+          loading={loading}
+          onClose={() => setShowOrderModal(false)}
+          onConfirm={(paid, method) => handleCreateOrder(paid, method)}
+        />
+      )}
     </div>
+  );
+};
+
+// Inline Component: Order Payment Status Modal
+const OrderPaymentModal: React.FC<{
+  grandTotal: number;
+  loading: boolean;
+  onClose: () => void;
+  onConfirm: (paidAmount: number, method: PaymentMethod) => void;
+}> = ({ grandTotal, loading, onClose, onConfirm }) => {
+  const [status, setStatus] = useState<'unpaid' | 'partial' | 'paid'>('unpaid');
+  const [amount, setAmount] = useState<number>(0);
+  const [method, setMethod] = useState<PaymentMethod>('cash');
+
+  const paid = status === 'unpaid' ? 0 : status === 'paid' ? grandTotal : Math.min(amount, grandTotal);
+  const remaining = Math.max(0, grandTotal - paid);
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+        <h3 className="text-base font-bold text-slate-900">შეკვეთის გაფორმება — გადახდის სტატუსი</h3>
+
+        <div className="bg-slate-900 text-white rounded-xl p-3 space-y-1">
+          <div className="flex justify-between"><span className="text-slate-300">შეკვეთის სრული თანხა:</span><span className="font-bold">{formatMoney(grandTotal)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-300">გადახდილი:</span><span className="font-bold text-emerald-400">{formatMoney(paid)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-300">დარჩენილი:</span><span className="font-bold text-amber-400">{formatMoney(remaining)}</span></div>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase">გადახდის მდგომარეობა *</label>
+          <div className="grid grid-cols-3 gap-2">
+            {([['unpaid', 'გადაუხდელი'], ['partial', 'ნაწილობრივ'], ['paid', 'სრულად']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => { setStatus(id); if (id === 'paid') setAmount(grandTotal); if (id === 'unpaid') setAmount(0); }}
+                className={`py-2 rounded-xl font-bold border transition cursor-pointer ${status === id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {status !== 'unpaid' && (
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">ახლა გადასახდელი (₾)</label>
+              <EditableNumber
+                value={amount}
+                onChange={(v) => setAmount(Math.min(v, grandTotal))}
+                placeholder="შეიყვანეთ თანხა"
+                className="w-full border border-slate-300 rounded-xl p-2.5 font-bold outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">გადახდის მეთოდი</label>
+              <select value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)} className="w-full border border-slate-300 rounded-xl p-2.5 outline-none">
+                <option value="cash">ნაღდი</option>
+                <option value="tbc_card">TBC</option>
+                <option value="bog_card">BOG</option>
+                <option value="tbc_transfer">TBC გადარიცხვა</option>
+                <option value="bog_transfer">BOG გადარიცხვა</option>
+                <option value="bank_transfer">სხვა გადარიცხვა</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-semibold cursor-pointer">გაუქმება</button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => onConfirm(paid, method)}
+            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer disabled:opacity-60"
+          >
+            {loading ? 'ინახება...' : 'შეკვეთის შენახვა'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Reusable numeric input that starts EMPTY and can be fully cleared (no auto-0).
+const EditableNumber: React.FC<{
+  value: number;
+  onChange: (v: number) => void;
+  placeholder?: string;
+  className?: string;
+  title?: string;
+  onClick?: (e: React.MouseEvent) => void;
+}> = ({ value, onChange, placeholder, className, title, onClick }) => {
+  const [str, setStr] = useState<string>(value ? String(value) : '');
+
+  useEffect(() => {
+    const cur = str === '' ? NaN : parseFloat(str);
+    if (cur !== value) setStr(value ? String(value) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={str}
+      title={title}
+      placeholder={placeholder}
+      onClick={onClick}
+      onChange={(e) => {
+        const raw = e.target.value.replace(/[^0-9.]/g, '');
+        setStr(raw);
+        const n = raw === '' ? 0 : parseFloat(raw);
+        onChange(isNaN(n) ? 0 : n);
+      }}
+      className={className}
+    />
   );
 };
 
