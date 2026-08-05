@@ -1,0 +1,6 @@
+{
+  "name": "ქართული POS / მარაგების მართვის სისტემა",
+  "description": "სრული POS, მარაგების, შესყიდვების, ინვოისებისა და ფინანსური მართვის სისტემა სამშენებლო და სამეურნეო მაღაზიისთვის.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
