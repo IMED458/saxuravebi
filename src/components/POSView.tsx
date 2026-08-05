@@ -6,17 +6,20 @@ import {
   User as UserIcon,
   UserPlus,
   Truck,
-  CreditCard,
-  DollarSign,
   Printer,
   PauseCircle,
   PlayCircle,
   PackagePlus,
   AlertCircle,
-  CheckCircle2,
-  Building,
-  Info,
-  FileText
+  FileText,
+  LayoutGrid,
+  List as ListIcon,
+  MoreHorizontal,
+  X,
+  ArrowLeft,
+  Delete,
+  ImageIcon,
+  ChevronUp
 } from 'lucide-react';
 import { Product, Customer, Sale, User, PaymentMethod, Category, Unit, Order } from '../types';
 import { api } from '../lib/api';
@@ -91,6 +94,20 @@ export const POSView: React.FC<Props> = ({
   // Held sales list
   const [heldSales, setHeldSales] = useState<Sale[]>([]);
   const [showHeldSalesModal, setShowHeldSalesModal] = useState(false);
+
+  // OPTIMO-style UI state
+  const [productTab, setProductTab] = useState<'main' | 'categories' | 'suppliers'>('main');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [numMode, setNumMode] = useState<'qty' | 'discount' | 'price'>('qty');
+  const [numBuffer, setNumBuffer] = useState<string>('');
+  const [showPayment, setShowPayment] = useState(false);
+
+  // Payment screen state
+  const [cashInput, setCashInput] = useState<string>('');
+  const [printReceipt, setPrintReceipt] = useState(true);
+  const [bankMethod, setBankMethod] = useState<PaymentMethod | null>(null);
 
   useEffect(() => {
     // Focus product search on mount
@@ -211,7 +228,7 @@ export const POSView: React.FC<Props> = ({
   }, [grandTotal]);
 
   // Handle Checkout / Invoice Generation
-  const handleCheckout = async () => {
+  const handleCheckout = async (paymentsArg?: { method: PaymentMethod; amount: number }[]) => {
     setError('');
 
     if (!selectedCustomer) {
@@ -238,7 +255,7 @@ export const POSView: React.FC<Props> = ({
         deliveryFee: delFee,
         deliveryType,
         deliveryDetails: deliveryType === 'delivery' ? deliveryDetails : undefined,
-        payments,
+        payments: paymentsArg || payments,
         actorId: user.id,
         actorName: `${user.firstName} ${user.lastName}`
       };
@@ -247,17 +264,72 @@ export const POSView: React.FC<Props> = ({
       onSaleCompleted(sale);
       onRefreshData();
 
-      // Reset cart
-      setCart([]);
-      setSelectedCustomer(null);
-      setDiscount(0);
-      setPayments([{ method: 'cash', amount: 0 }]);
-      setTenderedCash(0);
+      // Reset
+      resetSaleState();
     } catch (err: any) {
       setError(err.message || 'გაყიდვის დასრულება ვერ განხორციელდა');
     } finally {
       setLoading(false);
     }
+  };
+
+  const resetSaleState = () => {
+    setCart([]);
+    setSelectedCustomer(null);
+    setDiscount(0);
+    setPayments([{ method: 'cash', amount: 0 }]);
+    setTenderedCash(0);
+    setShowPayment(false);
+    setCashInput('');
+    setBankMethod(null);
+    setActiveIndex(null);
+    setNumBuffer('');
+  };
+
+  // Assemble payments from the payment screen (cash + optional bank) and finalize.
+  const confirmPayment = () => {
+    const cash = parseFloat(cashInput) || 0;
+    const cashPortion = Math.min(cash, grandTotal);
+    const remaining = Math.round((grandTotal - cashPortion) * 100) / 100;
+    const assembled: { method: PaymentMethod; amount: number }[] = [];
+    if (cashPortion > 0) assembled.push({ method: 'cash', amount: cashPortion });
+    if (remaining > 0) assembled.push({ method: bankMethod || 'debt', amount: remaining });
+    if (assembled.length === 0) assembled.push({ method: 'cash', amount: 0 });
+    setTenderedCash(cash);
+    handleCheckout(assembled);
+  };
+
+  const pushCash = (d: string) => {
+    if (d === 'back') setCashInput((s) => s.slice(0, -1));
+    else if (d === '.') setCashInput((s) => (s.includes('.') ? s : (s || '0') + '.'));
+    else setCashInput((s) => s + d);
+  };
+  const addCash = (n: number) => setCashInput((s) => String(Math.round(((parseFloat(s) || 0) + n) * 100) / 100));
+
+  // Numpad on the main screen edits the selected cart line or the global discount.
+  const applyNumpad = (digit: string) => {
+    let buf = numBuffer;
+    if (digit === 'C') buf = '';
+    else if (digit === 'back') buf = buf.slice(0, -1);
+    else if (digit === '.') buf = buf.includes('.') ? buf : buf + '.';
+    else buf = buf + digit;
+    setNumBuffer(buf);
+    const val = parseFloat(buf) || 0;
+    if (numMode === 'discount') {
+      setDiscount(val);
+    } else if (activeIndex !== null && cart[activeIndex]) {
+      if (numMode === 'qty' && val > 0) updateQuantity(activeIndex, val);
+      if (numMode === 'price') updateCustomPrice(activeIndex, val);
+    }
+  };
+
+  // When switching the numpad target, seed the buffer with the current value.
+  const setNumTarget = (mode: 'qty' | 'discount' | 'price') => {
+    setNumMode(mode);
+    if (mode === 'discount') setNumBuffer(discount ? String(discount) : '');
+    else if (activeIndex !== null && cart[activeIndex]) {
+      setNumBuffer(String(mode === 'qty' ? cart[activeIndex].quantity : cart[activeIndex].customPrice));
+    } else setNumBuffer('');
   };
 
   // Handle Order Creation (Stock NOT deducted)
@@ -382,197 +454,112 @@ export const POSView: React.FC<Props> = ({
     setShowHeldSalesModal(false);
   };
 
-  return (
-    <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-6rem)]">
-      {/* LEFT COL: Cart & Operations (65%) */}
-      <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-        {/* Customer Header */}
-        <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
-              <UserIcon className="w-5 h-5" />
-            </div>
-            <div className="flex-1">
-              <label className="block text-[10px] font-bold tracking-wider text-slate-400 uppercase">
-                კლიენტის არჩევა <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={selectedCustomer?.id || ''}
-                onChange={(e) => {
-                  const cust = customers.find((c) => c.id === e.target.value);
-                  setSelectedCustomer(cust || null);
-                  if (cust?.address) {
-                    setDeliveryDetails((prev) => ({
-                      ...prev,
-                      address: cust.address || '',
-                      recipientName:
-                        cust.type === 'company'
-                          ? cust.companyName || cust.name
-                          : `${cust.name} ${cust.lastName || ''}`,
-                      recipientPhone: cust.phone
-                    }));
-                  }
-                }}
-                className="w-full bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-blue-500 outline-none"
-              >
-                <option value="">-- აირჩიეთ კლიენტი (სავალდებულოა) --</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.type === 'company' ? `🏢 ${c.companyName || c.name}` : `👤 ${c.name} ${c.lastName || ''}`} ({c.phone})
-                    {c.totalDebt > 0 ? ` - ვალი: ${formatMoney(c.totalDebt)}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+  const activeProducts = products.filter((p) => p.status === 'active');
+  const gridProducts = activeProducts.filter((p) => {
+    const q = productSearch.toLowerCase();
+    const matchSearch =
+      !q ||
+      p.name.toLowerCase().includes(q) ||
+      p.code.toLowerCase().includes(q) ||
+      (p.barcode && p.barcode.toLowerCase().includes(q));
+    const matchCat = categoryFilter === 'all' || p.categoryId === categoryFilter;
+    return matchSearch && matchCat;
+  });
 
+  const custName = selectedCustomer
+    ? selectedCustomer.type === 'company'
+      ? selectedCustomer.companyName || selectedCustomer.name
+      : `${selectedCustomer.name} ${selectedCustomer.lastName || ''}`.trim()
+    : '';
+
+  const cashNum = parseFloat(cashInput) || 0;
+  const changeAmount = Math.round((cashNum - grandTotal) * 100) / 100;
+
+  const digitBtn =
+    'bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 font-bold text-lg rounded-xl flex items-center justify-center transition cursor-pointer select-none';
+
+  return (
+    <div className="flex flex-col lg:flex-row gap-4 h-[calc(100vh-6rem)] relative">
+      {/* ============================= LEFT: CART + KEYPAD ============================= */}
+      <div className="w-full lg:w-[40%] lg:min-w-[380px] bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+        {/* Customer bar */}
+        <div className="p-3 border-b border-slate-200 flex items-center gap-2">
+          <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center flex-shrink-0">
+            <UserIcon className="w-4 h-4" />
+          </div>
+          <select
+            value={selectedCustomer?.id || ''}
+            onChange={(e) => {
+              const cust = customers.find((c) => c.id === e.target.value);
+              setSelectedCustomer(cust || null);
+            }}
+            className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">-- აირჩიეთ კლიენტი (სავალდებულოა) --</option>
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.type === 'company' ? `🏢 ${c.companyName || c.name}` : `👤 ${c.name} ${c.lastName || ''}`} ({c.phone})
+              </option>
+            ))}
+          </select>
           <button
             onClick={() => setShowAddCustomerModal(true)}
-            className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+            className="w-9 h-9 bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex items-center justify-center flex-shrink-0 transition cursor-pointer"
+            title="ახალი კლიენტი"
           >
             <UserPlus className="w-4 h-4" />
-            <span>+ ახალი კლიენტი</span>
           </button>
         </div>
 
-        {/* Product Search Input Bar */}
-        <div className="p-4 bg-white border-b border-slate-200 relative">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1">
-              <Search className="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
-                placeholder="ჩაწერეთ პროდუქტის სახელი, კოდი (მაგ: PIPE-4040-2) ან Barcode..."
-                className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm text-slate-900 font-medium placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none shadow-inner"
-              />
-            </div>
-            <button
-              onClick={() => setShowAddProductModal(true)}
-              className="px-3.5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition cursor-pointer"
-              title="სწრაფი პროდუქტის დამატება"
-            >
-              <PackagePlus className="w-4 h-4" />
-              <span className="hidden sm:inline">+ პროდუქტი</span>
-            </button>
-          </div>
-
-          {/* Instant Product Results Dropdown */}
-          {filteredProducts.length > 0 && (
-            <div className="absolute top-full left-4 right-4 mt-1 bg-white border border-slate-300 rounded-2xl shadow-2xl z-40 overflow-hidden divide-y divide-slate-100 max-h-72 overflow-y-auto">
-              {filteredProducts.map((p) => (
-                <div
-                  key={p.id}
-                  onClick={() => addToCart(p)}
-                  className="p-3 hover:bg-blue-50 cursor-pointer flex items-center justify-between transition group"
-                >
-                  <div>
-                    <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600">{p.name}</div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      კოდი: <span className="font-mono text-blue-600 font-semibold">{p.code}</span> | მარაგი:{' '}
-                      <span className={p.currentStock <= p.minStock ? 'text-amber-600 font-bold' : 'text-slate-700'}>
-                        {p.currentStock} {p.unit}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-extrabold text-blue-600">{formatMoney(p.sellingPrice)}</div>
-                    <div className="text-[10px] text-slate-400">ერთეული: {p.unit}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Cart Table */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        {/* Cart list */}
+        <div className="flex-1 overflow-y-auto p-2">
           {cart.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-2">
-              <Search className="w-12 h-12 text-slate-300 stroke-[1.5]" />
-              <p className="text-xs font-medium">კალათა ცარიელია</p>
-              <p className="text-[11px] text-slate-400">მოძებნეთ პროდუქტი კოდით ან სახელით ზედა ველში</p>
+            <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-2">
+              <div className="w-16 h-16 rounded-2xl border-2 border-slate-200 flex items-center justify-center">
+                <FileText className="w-8 h-8 stroke-[1.5]" />
+              </div>
+              <p className="text-sm font-semibold text-slate-400">კალათა ცარიელია</p>
+              <p className="text-[11px] text-slate-400">აირჩიეთ პროდუქტი მარჯვენა მხრიდან</p>
             </div>
           ) : (
-            <div className="space-y-2">
-              <div className="grid grid-cols-12 gap-2 px-3 py-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                <div className="col-span-5">პროდუქტი</div>
-                <div className="col-span-2 text-center">რაოდენობა</div>
-                <div className="col-span-2 text-center">ფასი (₾)</div>
-                <div className="col-span-2 text-right">ჯამი</div>
-                <div className="col-span-1 text-center">წაშლა</div>
-              </div>
-
+            <div className="space-y-1.5">
               {cart.map((item, idx) => {
-                const isModifiedPrice = item.customPrice !== item.product.sellingPrice;
+                const isActive = activeIndex === idx;
+                const isModified = item.customPrice !== item.product.sellingPrice;
                 return (
                   <div
                     key={idx}
-                    className="grid grid-cols-12 gap-2 items-center bg-slate-50 hover:bg-slate-100 p-3 rounded-xl border border-slate-200 transition"
+                    onClick={() => {
+                      setActiveIndex(idx);
+                      setNumMode('qty');
+                      setNumBuffer(String(item.quantity));
+                    }}
+                    className={`p-2.5 rounded-xl border cursor-pointer transition ${
+                      isActive ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-400' : 'border-slate-200 bg-white hover:bg-slate-50'
+                    }`}
                   >
-                    <div className="col-span-5 flex items-center gap-3">
-                      {item.product.image ? (
-                        <img
-                          src={item.product.image}
-                          alt={item.product.name}
-                          className="w-10 h-10 object-cover rounded-lg border border-slate-200"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 rounded-lg bg-slate-200 text-slate-500 font-bold text-xs flex items-center justify-center">
-                          {item.product.code.slice(0, 3)}
-                        </div>
-                      )}
-                      <div>
-                        <div className="text-xs font-bold text-slate-900 leading-tight">{item.product.name}</div>
-                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                          {item.product.code} | მარაგში: {item.product.currentStock} {item.product.unit}
-                        </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-slate-900 truncate">{item.product.name}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">{item.product.code}</div>
                       </div>
-                    </div>
-
-                    {/* Quantity Input (Supports Decimals e.g. 2.5) */}
-                    <div className="col-span-2 flex items-center justify-center gap-1">
-                      <input
-                        type="number"
-                        step="any"
-                        min="0.001"
-                        value={item.quantity}
-                        onChange={(e) => updateQuantity(idx, parseFloat(e.target.value) || 0)}
-                        className="w-16 py-1 px-2 text-center text-xs font-bold bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
-                      <span className="text-[10px] text-slate-500 font-semibold">{item.product.unit}</span>
-                    </div>
-
-                    {/* Price Override Input */}
-                    <div className="col-span-2 text-center">
-                      <input
-                        type="number"
-                        step="any"
-                        value={item.customPrice}
-                        onChange={(e) => updateCustomPrice(idx, parseFloat(e.target.value) || 0)}
-                        className={`w-20 py-1 px-2 text-center text-xs font-bold bg-white border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none ${
-                          isModifiedPrice ? 'border-amber-500 text-amber-700 bg-amber-50' : 'border-slate-300 text-slate-900'
-                        }`}
-                        title={isModifiedPrice ? `სტანდარტული ფასი: ${item.product.sellingPrice} ₾` : ''}
-                      />
-                      {isModifiedPrice && (
-                        <div className="text-[9px] text-amber-600 font-bold mt-0.5">ფასი შეცვლილია</div>
-                      )}
-                    </div>
-
-                    <div className="col-span-2 text-right text-xs font-extrabold text-blue-700">
-                      {formatMoney(item.lineTotal)}
-                    </div>
-
-                    <div className="col-span-1 text-center">
                       <button
-                        onClick={() => removeFromCart(idx)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeFromCart(idx);
+                          if (activeIndex === idx) setActiveIndex(null);
+                        }}
+                        className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer flex-shrink-0"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
+                    </div>
+                    <div className="flex items-center justify-between mt-1.5 text-[11px]">
+                      <span className="text-slate-600 font-semibold">
+                        {formatNum(item.quantity)} {item.product.unit} ×{' '}
+                        <span className={isModified ? 'text-amber-600 font-bold' : ''}>{formatMoney(item.customPrice)}</span>
+                      </span>
+                      <span className="text-sm font-extrabold text-blue-700">{formatMoney(item.lineTotal)}</span>
                     </div>
                   </div>
                 );
@@ -581,281 +568,328 @@ export const POSView: React.FC<Props> = ({
           )}
         </div>
 
-        {/* Footer Actions & Hold Sales */}
-        <div className="p-3 bg-slate-100 border-t border-slate-200 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleHoldSale}
-              disabled={cart.length === 0}
-              className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
-            >
-              <PauseCircle className="w-4 h-4 text-slate-600" />
-              <span>შეჩერება</span>
-            </button>
-
-            {heldSales.length > 0 && (
-              <button
-                onClick={() => setShowHeldSalesModal(true)}
-                className="px-3 py-1.5 bg-amber-100 text-amber-800 font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <PlayCircle className="w-4 h-4 text-amber-600" />
-                <span>შეჩერებულები ({heldSales.length})</span>
-              </button>
-            )}
-          </div>
-
-          <div className="text-slate-600 font-medium">
-            სულ პროდუქცია: <span className="font-bold text-slate-900">{cart.length} დასახელება</span>
-          </div>
-        </div>
-      </div>
-
-      {/* RIGHT COL: Summary, Delivery & Checkout (35%) */}
-      <div className="w-full lg:w-96 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col p-5 overflow-y-auto space-y-5">
-        <h2 className="text-sm font-bold text-slate-900 tracking-wide border-b border-slate-200 pb-3">
-          გადახდა & მიწოდება
-        </h2>
-
         {error && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-500" />
+          <div className="mx-2 mb-1 p-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-[11px] flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
-        {/* Delivery Toggle */}
-        <div className="space-y-2">
-          <label className="block text-xs font-bold text-slate-700">მიწოდების ტიპი</label>
-          <div className="grid grid-cols-2 gap-2">
+        {/* Secondary actions */}
+        <div className="px-2 pt-1 flex items-center gap-1.5">
+          <button
+            onClick={handleHoldSale}
+            disabled={cart.length === 0}
+            className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-[11px] flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
+          >
+            <PauseCircle className="w-3.5 h-3.5" /> შეჩერება
+          </button>
+          {heldSales.length > 0 && (
             <button
-              type="button"
-              onClick={() => setDeliveryType('pickup')}
-              className={`py-2 px-3 rounded-xl text-xs font-semibold border transition cursor-pointer ${
-                deliveryType === 'pickup'
-                  ? 'bg-blue-50 border-blue-600 text-blue-700'
-                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-              }`}
+              onClick={() => setShowHeldSalesModal(true)}
+              className="flex-1 py-1.5 bg-amber-100 text-amber-800 font-semibold rounded-lg text-[11px] flex items-center justify-center gap-1 cursor-pointer"
             >
-              🏢 თვითგატანა
+              <PlayCircle className="w-3.5 h-3.5" /> ({heldSales.length})
             </button>
-            <button
-              type="button"
-              onClick={() => setDeliveryType('delivery')}
-              className={`py-2 px-3 rounded-xl text-xs font-semibold border transition cursor-pointer ${
-                deliveryType === 'delivery'
-                  ? 'bg-blue-50 border-blue-600 text-blue-700'
-                  : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              🚚 მიწოდება
-            </button>
-          </div>
-        </div>
-
-        {/* Delivery Details Fields */}
-        {deliveryType === 'delivery' && (
-          <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
-            <div className="font-bold text-slate-800 flex items-center gap-1.5">
-              <Truck className="w-4 h-4 text-blue-600" />
-              <span>მიწოდების მონაცემები</span>
-            </div>
-
-            <input
-              type="text"
-              placeholder="მისატანი მისამართი *"
-              value={deliveryDetails.address}
-              onChange={(e) => setDeliveryDetails({ ...deliveryDetails, address: e.target.value })}
-              className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none focus:ring-1 focus:ring-blue-500"
-            />
-
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                type="text"
-                placeholder="მიმღები *"
-                value={deliveryDetails.recipientName}
-                onChange={(e) => setDeliveryDetails({ ...deliveryDetails, recipientName: e.target.value })}
-                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <input
-                type="text"
-                placeholder="ტელეფონი *"
-                value={deliveryDetails.recipientPhone}
-                onChange={(e) => setDeliveryDetails({ ...deliveryDetails, recipientPhone: e.target.value })}
-                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                type="text"
-                placeholder="მძღოლი"
-                value={deliveryDetails.driverName}
-                onChange={(e) => setDeliveryDetails({ ...deliveryDetails, driverName: e.target.value })}
-                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <input
-                type="text"
-                placeholder="მანქანის N"
-                value={deliveryDetails.carNumber}
-                onChange={(e) => setDeliveryDetails({ ...deliveryDetails, carNumber: e.target.value })}
-                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">მიწოდების საფასური (₾)</label>
-              <input
-                type="number"
-                value={deliveryDetails.fee}
-                onChange={(e) =>
-                  setDeliveryDetails({ ...deliveryDetails, fee: parseFloat(e.target.value) || 0 })
-                }
-                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-bold outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Financial Summary Box */}
-        <div className="p-4 bg-slate-900 text-white rounded-2xl space-y-2 text-xs">
-          <div className="flex justify-between text-slate-300">
-            <span>პროდუქციის ჯამი:</span>
-            <span className="font-semibold">{formatMoney(subtotal)}</span>
-          </div>
-
-          <div className="flex items-center justify-between text-slate-300">
-            <span>ფასდაკლება (₾):</span>
-            <input
-              type="number"
-              value={discount}
-              onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
-              className="w-20 text-right bg-slate-800 border border-slate-700 text-white font-bold rounded-lg px-2 py-1 outline-none"
-            />
-          </div>
-
-          {deliveryType === 'delivery' && (
-            <div className="flex justify-between text-slate-300">
-              <span>მიწოდების საფასური:</span>
-              <span className="font-semibold">{formatMoney(delFee)}</span>
-            </div>
           )}
-
-          <div className="border-t border-slate-800 pt-2 flex justify-between items-center text-sm font-extrabold text-white">
-            <span>საბოლოო გადასახდელი:</span>
-            <span className="text-xl text-emerald-400">{formatMoney(grandTotal)}</span>
-          </div>
-        </div>
-
-        {/* Split Payments Section */}
-        <div className="space-y-3">
-          <label className="block text-xs font-bold text-slate-700">გადახდის მეთოდი (Split Payment)</label>
-
-          {payments.map((p, pIdx) => (
-            <div key={pIdx} className="flex items-center gap-2">
-              <select
-                value={p.method}
-                onChange={(e) => {
-                  const updated = [...payments];
-                  updated[pIdx].method = e.target.value as PaymentMethod;
-                  setPayments(updated);
-                }}
-                className="flex-1 bg-white border border-slate-300 rounded-xl px-2.5 py-2 text-xs font-medium text-slate-800 outline-none"
-              >
-                <option value="cash">💵 ნაღდი</option>
-                <option value="bog_card">💳 BOG (POS ბარათი)</option>
-                <option value="tbc_card">💳 TBC (POS ბარათი)</option>
-                <option value="tbc_transfer">🏦 TBC გადარიცხვა</option>
-                <option value="bog_transfer">🏦 BOG გადარიცხვა</option>
-                <option value="bank_transfer">🏦 სხვა ბანკი</option>
-                <option value="debt">📝 დავალიანება (ნისია)</option>
-              </select>
-
-              <input
-                type="number"
-                value={p.amount}
-                onChange={(e) => {
-                  const updated = [...payments];
-                  updated[pIdx].amount = parseFloat(e.target.value) || 0;
-                  setPayments(updated);
-                }}
-                className="w-24 bg-white border border-slate-300 rounded-xl px-2.5 py-2 text-xs font-bold text-slate-900 outline-none"
-              />
-
-              {payments.length > 1 && (
-                <button
-                  onClick={() => setPayments(payments.filter((_, i) => i !== pIdx))}
-                  className="p-2 text-slate-400 hover:text-red-500 cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          ))}
-
-          <button
-            type="button"
-            onClick={() => setPayments([...payments, { method: 'bog_card', amount: 0 }])}
-            className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>+ გადახდის მეთოდის დამატება</span>
-          </button>
-        </div>
-
-        {/* Cash Tendered & Change Due */}
-        {payments.some((p) => p.method === 'cash') && (
-          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-700">მიღებული ნაღდი (₾):</span>
-              <input
-                type="number"
-                value={tenderedCash}
-                onChange={(e) => setTenderedCash(parseFloat(e.target.value) || 0)}
-                placeholder="100"
-                className="w-24 text-right bg-white border border-emerald-300 font-extrabold text-sm text-emerald-800 rounded-lg px-2 py-1 outline-none"
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-              <span>დასაბრუნებელი ხურდა:</span>
-              <span className="text-base text-emerald-700">{formatMoney(changeDue)}</span>
-            </div>
-          </div>
-        )}
-
-        {/* Checkout Buttons */}
-        <div className="space-y-2 mt-auto">
-          <button
-            onClick={handleCheckout}
-            disabled={loading || cart.length === 0}
-            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-2xl shadow-lg shadow-emerald-500/20 transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
-          >
-            {loading ? (
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <>
-                <Printer className="w-4 h-4" />
-                <span>1. გადახდა / დასრულება (სრული გაყიდვა)</span>
-              </>
-            )}
-          </button>
-
           <button
             onClick={handleCreateOrder}
             disabled={loading || cart.length === 0}
-            className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-extrabold text-xs rounded-2xl shadow-lg shadow-blue-500/20 transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+            className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-semibold rounded-lg text-[11px] flex items-center justify-center gap-1 disabled:opacity-50 cursor-pointer"
           >
-            {loading ? (
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <>
-                <FileText className="w-4 h-4" />
-                <span>2. შეკვეთაში გადატანა / შეკვეთის გაფორმება</span>
-              </>
-            )}
+            <FileText className="w-3.5 h-3.5" /> შეკვეთა
           </button>
         </div>
+
+        {/* Total + keypad */}
+        <div className="p-2 border-t border-slate-200 mt-1">
+          <div className="flex items-center justify-between bg-slate-900 text-white rounded-xl px-3 py-2 mb-2">
+            <span className="text-[11px] text-slate-300 font-semibold">სულ გადასახდელი:</span>
+            <span className="text-lg font-extrabold text-emerald-400">{formatMoney(grandTotal)}</span>
+          </div>
+
+          <div className="grid grid-cols-[4.5rem_1fr_1fr_1fr_6rem] grid-rows-4 gap-1.5" style={{ height: '13rem' }}>
+            {/* mode column */}
+            <button
+              onClick={() => setNumTarget('qty')}
+              className={`rounded-xl text-[11px] font-bold transition cursor-pointer ${numMode === 'qty' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              რაოდენობა
+            </button>
+            <button onClick={() => applyNumpad('1')} className={digitBtn}>1</button>
+            <button onClick={() => applyNumpad('2')} className={digitBtn}>2</button>
+            <button onClick={() => applyNumpad('3')} className={digitBtn}>3</button>
+            <button
+              onClick={() => {
+                if (cart.length === 0) { setError('კალათა ცარიელია'); return; }
+                setError('');
+                setShowPayment(true);
+                setCashInput('');
+                setBankMethod(null);
+              }}
+              className="row-span-4 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl flex flex-col items-center justify-center gap-1 font-extrabold transition cursor-pointer shadow-lg shadow-blue-500/20"
+            >
+              <Printer className="w-5 h-5" />
+              <span className="text-xs">გადახდა</span>
+              <span className="text-[9px] font-medium opacity-80">(გაყიდვა)</span>
+            </button>
+
+            <button
+              onClick={() => setNumTarget('discount')}
+              className={`rounded-xl text-[11px] font-bold transition cursor-pointer ${numMode === 'discount' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              ფასდაკლება
+            </button>
+            <button onClick={() => applyNumpad('4')} className={digitBtn}>4</button>
+            <button onClick={() => applyNumpad('5')} className={digitBtn}>5</button>
+            <button onClick={() => applyNumpad('6')} className={digitBtn}>6</button>
+
+            <button
+              onClick={() => setNumTarget('price')}
+              className={`rounded-xl text-[11px] font-bold transition cursor-pointer ${numMode === 'price' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            >
+              ფასი
+            </button>
+            <button onClick={() => applyNumpad('7')} className={digitBtn}>7</button>
+            <button onClick={() => applyNumpad('8')} className={digitBtn}>8</button>
+            <button onClick={() => applyNumpad('9')} className={digitBtn}>9</button>
+
+            <button onClick={() => applyNumpad('C')} className="bg-red-100 hover:bg-red-200 text-red-700 font-bold rounded-xl transition cursor-pointer">C</button>
+            <button onClick={() => applyNumpad('back')} className={digitBtn}><Delete className="w-4 h-4" /></button>
+            <button onClick={() => applyNumpad('0')} className={digitBtn}>0</button>
+            <button onClick={() => applyNumpad('.')} className={digitBtn}>.</button>
+          </div>
+        </div>
       </div>
+
+      {/* ============================= RIGHT: PRODUCT GRID ============================= */}
+      <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+        {/* Search */}
+        <div className="p-3 border-b border-slate-200 flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={productSearch}
+              onChange={(e) => setProductSearch(e.target.value)}
+              placeholder="პროდუქტის ძიება..."
+              className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+            />
+          </div>
+          <button
+            onClick={() => setShowAddProductModal(true)}
+            className="px-3 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1 cursor-pointer"
+          >
+            <PackagePlus className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Tabs + view toggle */}
+        <div className="px-3 py-2 border-b border-slate-200 flex items-center justify-between gap-2">
+          <div className="flex gap-1.5">
+            {([['main', 'მთავარი'], ['categories', 'კატეგორიები'], ['suppliers', 'მომწოდებლები']] as const).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setProductTab(id)}
+                className={`px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${productTab === id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+            <button onClick={() => setViewMode('grid')} className={`p-1.5 rounded-md transition cursor-pointer ${viewMode === 'grid' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md transition cursor-pointer ${viewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>
+              <ListIcon className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Category chips */}
+        {productTab === 'categories' && (
+          <div className="px-3 py-2 border-b border-slate-200 flex flex-wrap gap-1.5">
+            <button onClick={() => setCategoryFilter('all')} className={`px-3 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${categoryFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>ყველა</button>
+            {categories.map((c) => (
+              <button key={c.id} onClick={() => setCategoryFilter(c.id)} className={`px-3 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${categoryFilter === c.id ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{c.name}</button>
+            ))}
+          </div>
+        )}
+
+        {/* Grid / list */}
+        <div className="flex-1 overflow-y-auto p-3">
+          {gridProducts.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2">
+              <Search className="w-10 h-10 text-slate-300" />
+              <p className="text-xs">პროდუქტი ვერ მოიძებნა</p>
+            </div>
+          ) : viewMode === 'grid' ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2.5">
+              {gridProducts.map((p) => {
+                const out = p.currentStock <= 0;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => addToCart(p)}
+                    className="text-left bg-white border border-slate-200 rounded-xl overflow-hidden hover:border-blue-400 hover:shadow-md transition cursor-pointer group"
+                  >
+                    <div className="relative aspect-square bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center">
+                      {p.image ? (
+                        <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <ImageIcon className="w-10 h-10 text-slate-300" />
+                      )}
+                      <span className="absolute top-1.5 left-1.5 px-2 py-0.5 bg-white/90 backdrop-blur text-slate-900 text-xs font-extrabold rounded-lg shadow-sm">
+                        {formatMoney(p.sellingPrice)}
+                      </span>
+                      <span className={`absolute top-1.5 right-1.5 px-1.5 py-0.5 text-[9px] font-bold rounded-md ${out ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                        {formatNum(p.currentStock)}
+                      </span>
+                    </div>
+                    <div className="p-2">
+                      <div className="text-[11px] font-bold text-slate-900 leading-tight line-clamp-2 group-hover:text-blue-600">{p.name}</div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">{p.code}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {gridProducts.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => addToCart(p)}
+                  className="w-full text-left bg-white border border-slate-200 rounded-xl p-2.5 flex items-center gap-3 hover:border-blue-400 hover:bg-blue-50 transition cursor-pointer"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+                    {p.image ? <img src={p.image} alt={p.name} className="w-full h-full object-cover rounded-lg" /> : <ImageIcon className="w-5 h-5 text-slate-300" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-slate-900 truncate">{p.name}</div>
+                    <div className="text-[10px] text-slate-400 font-mono">{p.code} · {formatNum(p.currentStock)} {p.unit}</div>
+                  </div>
+                  <div className="text-sm font-extrabold text-blue-700">{formatMoney(p.sellingPrice)}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ============================= PAYMENT SCREEN ============================= */}
+      {showPayment && (
+        <div className="fixed inset-0 z-40 bg-slate-50 flex flex-col">
+          <div className="h-14 bg-white border-b border-slate-200 flex items-center px-4 gap-3">
+            <button onClick={() => setShowPayment(false)} className="p-2 hover:bg-slate-100 rounded-xl cursor-pointer">
+              <ArrowLeft className="w-5 h-5 text-slate-700" />
+            </button>
+            <h2 className="text-sm font-bold text-slate-900">გადახდა{custName ? ` — ${custName}` : ''}</h2>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-6 max-w-5xl w-full mx-auto">
+            <div className="grid grid-cols-2 gap-6 text-center mb-6">
+              <div>
+                <div className="text-xs text-slate-500 font-semibold">სულ გადასახდელი (₾)</div>
+                <div className="text-3xl font-extrabold text-slate-900 mt-1">{formatMoney(grandTotal)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-500 font-semibold">ხურდა (₾)</div>
+                <div className={`text-3xl font-extrabold mt-1 ${changeAmount < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{formatMoney(changeAmount)}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left: cash + banks */}
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">ნაღდი ანგარიშსწორება</label>
+                  <div className="flex items-stretch border-2 border-blue-500 rounded-xl overflow-hidden">
+                    <input
+                      type="text"
+                      value={cashInput}
+                      readOnly
+                      placeholder="0.00"
+                      className="flex-1 px-4 py-3 text-lg font-bold text-slate-900 outline-none"
+                    />
+                    <button
+                      onClick={() => setCashInput(String(grandTotal))}
+                      className="px-4 bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
+                    >
+                      ზუსტი თანხა
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setPrintReceipt((v) => !v)}
+                  className="w-full flex items-center justify-between bg-blue-50 rounded-xl px-4 py-3 cursor-pointer"
+                >
+                  <span className="text-sm font-semibold text-slate-800">ქვითრის ამობეჭდვა</span>
+                  <span className={`w-11 h-6 rounded-full transition relative ${printReceipt ? 'bg-blue-600' : 'bg-slate-300'}`}>
+                    <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition ${printReceipt ? 'left-[22px]' : 'left-0.5'}`} />
+                  </span>
+                </button>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">უნაღდო ანგარიშსწორება</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([['bog_card', 'BOG ბარათი'], ['tbc_card', 'TBC ბარათი'], ['bog_transfer', 'BOG გადარიცხვა'], ['tbc_transfer', 'TBC გადარიცხვა'], ['bank_transfer', 'სხვა ბანკი'], ['debt', 'დავალიანება']] as const).map(([m, label]) => (
+                      <button
+                        key={m}
+                        onClick={() => setBankMethod(bankMethod === m ? null : m)}
+                        className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition cursor-pointer ${bankMethod === m ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: numpad */}
+              <div className="space-y-2">
+                <div className="grid grid-cols-4 gap-2">
+                  {['1', '2', '3'].map((d) => (
+                    <button key={d} onClick={() => pushCash(d)} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">{d}</button>
+                  ))}
+                  <button onClick={() => addCash(10)} className="py-4 bg-slate-800 text-white rounded-xl text-sm font-bold cursor-pointer">+10</button>
+                  {['4', '5', '6'].map((d) => (
+                    <button key={d} onClick={() => pushCash(d)} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">{d}</button>
+                  ))}
+                  <button onClick={() => addCash(20)} className="py-4 bg-slate-800 text-white rounded-xl text-sm font-bold cursor-pointer">+20</button>
+                  {['7', '8', '9'].map((d) => (
+                    <button key={d} onClick={() => pushCash(d)} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">{d}</button>
+                  ))}
+                  <button onClick={() => addCash(50)} className="py-4 bg-slate-800 text-white rounded-xl text-sm font-bold cursor-pointer">+50</button>
+                  <button onClick={() => pushCash('back')} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl flex items-center justify-center cursor-pointer"><Delete className="w-5 h-5" /></button>
+                  <button onClick={() => pushCash('0')} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">0</button>
+                  <button onClick={() => pushCash('.')} className="py-4 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl text-xl font-bold cursor-pointer">.</button>
+                  <button onClick={() => setCashInput('')} className="py-4 bg-red-100 text-red-700 rounded-xl text-lg font-bold cursor-pointer">C</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white border-t border-slate-200 p-4 flex items-center gap-3 max-w-5xl w-full mx-auto">
+            <button
+              onClick={() => { setPayments([...payments, { method: 'bog_card', amount: 0 }]); }}
+              className="px-5 py-3.5 border border-slate-300 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+            >
+              ქვითრის გაყოფა
+            </button>
+            <button
+              onClick={confirmPayment}
+              disabled={loading}
+              className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-extrabold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+            >
+              {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <>დადასტურება <span>»</span></>}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: Add Customer Modal */}
       {showAddCustomerModal && (
@@ -890,29 +924,16 @@ export const POSView: React.FC<Props> = ({
             <h3 className="text-base font-bold text-slate-900">შეჩერებული გაყიდვები</h3>
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {heldSales.map((s) => (
-                <div
-                  key={s.id}
-                  className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between"
-                >
+                <div key={s.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
                   <div>
                     <div className="text-xs font-bold text-slate-800">{s.holdNote}</div>
                     <div className="text-[10px] text-slate-500">{s.date.slice(0, 16).replace('T', ' ')}</div>
                   </div>
-                  <button
-                    onClick={() => handleResumeSale(s)}
-                    className="px-3 py-1.5 bg-blue-600 text-white font-semibold rounded-lg text-xs cursor-pointer"
-                  >
-                    გახსნა
-                  </button>
+                  <button onClick={() => handleResumeSale(s)} className="px-3 py-1.5 bg-blue-600 text-white font-semibold rounded-lg text-xs cursor-pointer">გახსნა</button>
                 </div>
               ))}
             </div>
-            <button
-              onClick={() => setShowHeldSalesModal(false)}
-              className="w-full py-2 bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs cursor-pointer"
-            >
-              დახურვა
-            </button>
+            <button onClick={() => setShowHeldSalesModal(false)} className="w-full py-2 bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs cursor-pointer">დახურვა</button>
           </div>
         </div>
       )}
