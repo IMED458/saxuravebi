@@ -482,6 +482,8 @@ export interface Settings {
   address: string;
   phone: string;
   email: string;
+  bankName?: string;
+  bankAccount?: string; // ანგარიშის ნომერი (IBAN) — გადადის ინვოისზეც
   logo?: string;
   invoiceHeader?: string;
   invoiceFooter?: string;

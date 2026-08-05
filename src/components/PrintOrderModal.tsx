@@ -82,6 +82,9 @@ const A4OrderDocument: React.FC<{ order: Order; settings: Settings }> = ({ order
             </p>
             <p>მისამართი: {settings.address}</p>
             <p>ტელეფონი: {settings.phone}</p>
+            {settings.bankAccount && (
+              <p>ანგარიშის ნომერი: <span className="font-bold text-slate-900">{settings.bankAccount}</span>{settings.bankName ? ` (${settings.bankName})` : ''}</p>
+            )}
           </div>
         </div>
 

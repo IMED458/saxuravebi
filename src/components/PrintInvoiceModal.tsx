@@ -110,6 +110,12 @@ const A4Invoice: React.FC<{ sale: Sale; settings: Settings }> = ({ sale, setting
             <p>მისამართი: {settings.address}</p>
             <p>ტელეფონი: {settings.phone}</p>
             <p>ელფოსტა: {settings.email}</p>
+            {settings.bankAccount && (
+              <p>
+                ანგარიშის ნომერი: <span className="font-bold text-slate-900">{settings.bankAccount}</span>
+                {settings.bankName ? ` (${settings.bankName})` : ''}
+              </p>
+            )}
           </div>
         </div>
 

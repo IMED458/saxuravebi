@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Product, Category, Unit, Customer, Supplier, Sale, Shift, Expense, Settings } from './types';
+import { User, Product, Category, Unit, Customer, Supplier, Sale, Shift, Expense, Settings, Order } from './types';
 import { api } from './lib/api';
 import { LoginScreen } from './components/LoginScreen';
 import { Header } from './components/Header';
@@ -14,6 +14,7 @@ import { SalesHistoryView } from './components/SalesHistoryView';
 import { ShiftsExpensesView } from './components/ShiftsExpensesView';
 import { ReportsAccountingView } from './components/ReportsAccountingView';
 import { AdminView } from './components/AdminView';
+import { OrdersView } from './components/OrdersView';
 import { PrintInvoiceModal } from './components/PrintInvoiceModal';
 
 export const App: React.FC = () => {
@@ -27,6 +28,7 @@ export const App: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [currentShift, setCurrentShift] = useState<Shift | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -37,8 +39,10 @@ export const App: React.FC = () => {
     address: 'თბილისი, ქსნის ქ. N12',
     phone: '+995 599 12 34 56',
     email: 'info@hardware-store.ge',
+    bankName: '',
+    bankAccount: '',
     allowNegativeStock: false,
-    defaultVatRate: 18,
+    defaultCurrency: '₾',
     invoiceHeader: 'გმადლობთ თანამშრომლობისთვის!',
     invoiceFooter: 'საქონელი მიღებულია სრულად და უდეფექტო მდგომარეობაში.'
   });
@@ -58,6 +62,7 @@ export const App: React.FC = () => {
         custsRes,
         supsRes,
         salesRes,
+        ordersRes,
         shiftsRes,
         curShiftRes,
         expensesRes,
@@ -70,6 +75,7 @@ export const App: React.FC = () => {
         api.getCustomers().catch(() => []),
         api.getSuppliers().catch(() => []),
         api.getSales().catch(() => []),
+        api.getOrders().catch(() => []),
         api.getShifts().catch(() => []),
         api.getCurrentShift().catch(() => null),
         api.getExpenses().catch(() => []),
@@ -83,6 +89,7 @@ export const App: React.FC = () => {
       setCustomers(custsRes);
       setSuppliers(supsRes);
       setSales(salesRes);
+      setOrders(ordersRes);
       setShifts(shiftsRes);
       setCurrentShift(curShiftRes);
       setExpenses(expensesRes);
@@ -181,9 +188,17 @@ export const App: React.FC = () => {
             activePage === 'invoices' ||
             activePage === 'held_sales' ||
             activePage === 'returns' ||
-            activePage === 'quotes' ||
-            activePage === 'orders') && (
+            activePage === 'quotes') && (
             <SalesHistoryView sales={sales} settings={settings} onRefreshData={loadData} />
+          )}
+
+          {activePage === 'orders' && (
+            <OrdersView
+              orders={orders}
+              products={products}
+              settings={settings}
+              onRefreshData={loadData}
+            />
           )}
 
           {(activePage === 'shift_current' ||
@@ -210,6 +225,22 @@ export const App: React.FC = () => {
 
           {(activePage === 'users_admin' || activePage === 'audit_logs' || activePage === 'settings') && (
             <AdminView user={currentUser} users={users} settings={settings} onRefreshData={loadData} />
+          )}
+
+          {(activePage === 'purchase_new' || activePage === 'purchases_history') && (
+            <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm text-center">
+              <h2 className="text-lg font-bold text-slate-900 mb-2">შესყიდვების მოდული</h2>
+              <p className="text-sm text-slate-500">
+                მარაგის შემოსვლა და ასაღები ფასი ამ ეტაპზე ხდება „მარაგი → ახალი შემოსვლა" გვერდიდან.
+                სრული შესყიდვების დოკუმენტი (მომწოდებელი + რამდენიმე პოზიცია) მალე დაემატება.
+              </p>
+              <button
+                onClick={() => setActivePage('stock_intake')}
+                className="mt-4 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold"
+              >
+                მარაგის დამატებაზე გადასვლა
+              </button>
+            </div>
           )}
         </main>
       </div>

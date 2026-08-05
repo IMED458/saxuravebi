@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // GitHub Pages serves this project under /saxuravebi/
+    base: '/saxuravebi/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
