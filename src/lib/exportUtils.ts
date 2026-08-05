@@ -8,6 +8,22 @@ export function exportToExcel(data: any[], filename: string) {
   XLSX.writeFile(workbook, `${filename}_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
+/** Export several named sheets into a single .xlsx workbook. */
+export function exportSheets(sheets: { name: string; rows: any[] }[], filename: string) {
+  const workbook = XLSX.utils.book_new();
+  let appended = 0;
+  sheets.forEach((s) => {
+    const rows = s.rows && s.rows.length ? s.rows : [{ ' ': 'მონაცემები არ არის' }];
+    const ws = XLSX.utils.json_to_sheet(rows);
+    // Sheet names are limited to 31 chars and cannot contain some symbols.
+    const safe = s.name.slice(0, 31).replace(/[\\/?*[\]:]/g, '');
+    XLSX.utils.book_append_sheet(workbook, ws, safe || `Sheet${appended + 1}`);
+    appended++;
+  });
+  if (appended === 0) return;
+  XLSX.writeFile(workbook, `${filename}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
 export function exportToCsv(data: any[], filename: string) {
   if (!data || data.length === 0) return;
   const worksheet = XLSX.utils.json_to_sheet(data);

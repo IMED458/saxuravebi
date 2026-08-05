@@ -15,6 +15,7 @@ import { ShiftsExpensesView } from './components/ShiftsExpensesView';
 import { ReportsAccountingView } from './components/ReportsAccountingView';
 import { AdminView } from './components/AdminView';
 import { OrdersView } from './components/OrdersView';
+import { FinancialReportView } from './components/FinancialReportView';
 import { PrintInvoiceModal } from './components/PrintInvoiceModal';
 import { PrintOrderModal } from './components/PrintOrderModal';
 
@@ -220,10 +221,18 @@ export const App: React.FC = () => {
             />
           )}
 
+          {(activePage === 'report_profit' || activePage === 'accounting') && (
+            <FinancialReportView
+              sales={sales}
+              products={products}
+              customers={customers}
+              suppliers={suppliers}
+              expenses={expenses}
+            />
+          )}
+
           {(activePage === 'report_sales' ||
-            activePage === 'report_profit' ||
             activePage === 'report_stock' ||
-            activePage === 'accounting' ||
             activePage === 'transactions' ||
             activePage === 'expenses_list') && (
             <ReportsAccountingView sales={sales} expenses={expenses} products={products} />

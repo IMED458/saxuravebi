@@ -1495,6 +1495,11 @@ export const api = {
     return data.cashTransactions;
   },
 
+  async getReturns(): Promise<ReturnDoc[]> {
+    const data = await ready();
+    return data.returns;
+  },
+
   // --------------------------------------------------------------- STOCK ----
   async getStockMovements(): Promise<StockMovement[]> {
     const data = await ready();
