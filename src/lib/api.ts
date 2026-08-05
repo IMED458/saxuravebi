@@ -136,7 +136,7 @@ export const api = {
     const {
       name, code, categoryId, unit, sellingPrice, minStock, status, barcode, sku, brand,
       supplierId, color, size, thickness, length, width, weight, description, note, image,
-      gallery, initialQuantity, initialCostPrice, actorName, actorId
+      gallery, initialQuantity, initialStock, initialCostPrice, actorName, actorId
     } = payload;
 
     if (!name || !code || !categoryId || !unit || sellingPrice === undefined) {
@@ -170,7 +170,7 @@ export const api = {
       updatedAt: nowIso
     };
 
-    const initQty = Number(initialQuantity) || 0;
+    const initQty = Number(initialQuantity ?? initialStock) || 0;
     const initCost = Number(initialCostPrice) || 0;
     if (initQty > 0) {
       newProd.currentStock = initQty;
@@ -276,9 +276,10 @@ export const api = {
     const data = await ready();
     const prod = data.products.find((p) => p.id === id);
     if (!prod) throw new Error('პროდუქტი ვერ მოიძებნა');
-    const { quantity, unitCost, supplierId, documentNo, comment, actorId, actorName } = payload;
+    const { quantity, unitCost, costPrice, supplierId, documentNo, docNumber, comment, actorId, actorName } = payload;
     const qty = Number(quantity);
-    const cost = Number(unitCost);
+    const cost = Number(unitCost ?? costPrice);
+    const docNo = documentNo ?? docNumber;
     if (!qty || qty <= 0 || cost === undefined || cost < 0) {
       throw new Error('გთხოვთ მიუთითოთ ვალიდური რაოდენობა და ასაღები ფასი');
     }
@@ -301,7 +302,7 @@ export const api = {
       receivedDate: new Date().toISOString(),
       supplierId: supplierId || undefined,
       supplierName: supplier ? supplier.name : undefined,
-      documentNo: documentNo || undefined
+      documentNo: docNo || undefined
     };
     const mov: StockMovement = {
       id: uid('mov'),
@@ -311,7 +312,7 @@ export const api = {
       previousStock: prevStock,
       newStock,
       type: 'purchase',
-      referenceNo: documentNo || 'INTAKE',
+      referenceNo: docNo || 'INTAKE',
       note: comment || 'მარაგის დამატება',
       date: new Date().toISOString(),
       userId: actorId || 'admin',
@@ -1314,7 +1315,10 @@ export const api = {
 
   async createExpense(payload: any): Promise<Expense> {
     const data = await ready();
-    const { category, amount, reason, recipient, receiptImage, comment, actorId, actorName } = payload;
+    const { category, amount, receiptImage, actorId, actorName, userId, userName } = payload;
+    const reason = payload.reason ?? payload.note;
+    const recipient = payload.recipient ?? payload.recipientName;
+    const comment = payload.comment ?? payload.note;
     const amt = Number(amount);
     if (!amt || amt <= 0 || !reason) throw new Error('მიუთითეთ თანხა და ხარჯის მიზეზი');
     const newExpense: Expense = {
@@ -1323,8 +1327,8 @@ export const api = {
       amount: amt,
       reason: reason.trim(),
       recipient: recipient?.trim() || '',
-      userId: actorId || 'cashier',
-      userName: actorName || 'მოლარე',
+      userId: actorId || userId || 'cashier',
+      userName: actorName || userName || 'მოლარე',
       date: new Date().toISOString(),
       receiptImage,
       comment
@@ -1337,18 +1341,19 @@ export const api = {
       method: 'cash',
       description: `თანხის გაცემა / ხარჯი: ${reason} (მიმღები: ${recipient || 'N/A'})`,
       date: new Date().toISOString(),
-      userId: actorId || 'cashier',
-      userName: actorName || 'მოლარე'
+      userId: actorId || userId || 'cashier',
+      userName: actorName || userName || 'მოლარე'
     };
     data.cashTransactions.unshift(tx);
     await Promise.all([store.set('expenses', newExpense), store.set('cashTransactions', tx)]);
-    await store.logAudit(actorId || 'cashier', actorName || 'მოლარე', 'თანხის გაცემა', `გაიცა ${amt} ₾, მიზეზი: ${reason}`);
+    await store.logAudit(actorId || userId || 'cashier', actorName || userName || 'მოლარე', 'თანხის გაცემა', `გაიცა ${amt} ₾, მიზეზი: ${reason}`);
     return newExpense;
   },
 
   async cashIn(payload: any): Promise<{ success: boolean }> {
     const data = await ready();
-    const { amount, description, actorId, actorName } = payload;
+    const { amount, description, actorId, actorName, userId, userName } = payload;
+    const desc = description ?? payload.note;
     const amt = Number(amount);
     if (!amt || amt <= 0) throw new Error('მიუთითეთ თანხა');
     const tx: CashTransaction = {
@@ -1356,14 +1361,14 @@ export const api = {
       type: 'cash_in',
       amount: amt,
       method: 'cash',
-      description: `სალაროში თანხის შეტანა: ${description || 'შეტანა'}`,
+      description: `სალაროში თანხის შეტანა: ${desc || 'შეტანა'}`,
       date: new Date().toISOString(),
-      userId: actorId || 'admin',
-      userName: actorName || 'ადმინი'
+      userId: actorId || userId || 'admin',
+      userName: actorName || userName || 'ადმინი'
     };
     data.cashTransactions.unshift(tx);
     await store.set('cashTransactions', tx);
-    await store.logAudit(actorId || 'admin', actorName || 'ადმინი', 'სალაროში შეტანა', `შეიტანა ${amt} ₾`);
+    await store.logAudit(actorId || userId || 'admin', actorName || userName || 'ადმინი', 'სალაროში შეტანა', `შეიტანა ${amt} ₾`);
     return { success: true };
   },
 

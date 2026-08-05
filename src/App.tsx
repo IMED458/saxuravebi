@@ -126,7 +126,7 @@ export const App: React.FC = () => {
         onNavigate={(p) => setActivePage(p)}
       />
 
-      <div className="flex flex-1 max-w-7xl w-full mx-auto">
+      <div className="flex flex-1 w-full">
         {/* Left Sidebar */}
         <Sidebar activePage={activePage} onNavigate={(p) => setActivePage(p)} user={currentUser} />
 

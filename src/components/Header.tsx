@@ -84,7 +84,7 @@ export const Header: React.FC<Props> = ({
 
   return (
     <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
-      <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
+      <div className="w-full px-6 h-16 flex items-center justify-between gap-4">
         {/* Left: Brand */}
         <div className="flex items-center gap-3 cursor-pointer" onClick={() => onNavigate('dashboard')}>
           <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center font-bold text-white shadow-lg shadow-blue-500/20">
