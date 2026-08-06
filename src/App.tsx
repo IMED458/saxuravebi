@@ -169,6 +169,7 @@ export const App: React.FC = () => {
               suppliers={suppliers}
               onRefreshData={loadData}
               activePage={activePage}
+              user={currentUser}
             />
           )}
 
@@ -178,7 +179,7 @@ export const App: React.FC = () => {
             activePage === 'stocktakes' ||
             activePage === 'stock_transfers' ||
             activePage === 'low_stock') && (
-            <StockView products={products} onRefreshData={loadData} activePage={activePage} />
+            <StockView products={products} onRefreshData={loadData} activePage={activePage} user={currentUser} />
           )}
 
           {(activePage === 'suppliers_list' || activePage === 'supplier_debts') && (
@@ -194,7 +195,7 @@ export const App: React.FC = () => {
             activePage === 'held_sales' ||
             activePage === 'returns' ||
             activePage === 'quotes') && (
-            <SalesHistoryView sales={sales} settings={settings} onRefreshData={loadData} activePage={activePage} />
+            <SalesHistoryView sales={sales} settings={settings} onRefreshData={loadData} activePage={activePage} user={currentUser} />
           )}
 
           {activePage === 'orders' && (

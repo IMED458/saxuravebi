@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { FileText, Printer, RotateCcw, Search, Eye, Download, Calendar } from 'lucide-react';
-import { Sale, Settings } from '../types';
+import { FileText, Printer, RotateCcw, Search, Eye, Download, Calendar, Trash2 } from 'lucide-react';
+import { Sale, Settings, User } from '../types';
 import { api } from '../lib/api';
 import { formatMoney, formatDate } from '../lib/formatters';
 import { exportToExcel } from '../lib/exportUtils';
@@ -11,6 +11,16 @@ interface Props {
   settings: Settings;
   onRefreshData: () => void;
   activePage?: string;
+  user?: User;
+}
+
+const canManage = (u?: User) =>
+  !!u && ['super_admin', 'owner', 'director', 'administrator'].includes(u.role);
+
+function saleStatusLabel(s: Sale): { text: string; cls: string } {
+  if (s.status === 'cancelled') return { text: 'გაუქმებული', cls: 'bg-slate-200 text-slate-600' };
+  if (s.status === 'returned') return { text: 'დაბრუნებული', cls: 'bg-red-100 text-red-700' };
+  return { text: 'გაყიდული', cls: 'bg-emerald-100 text-emerald-800' };
 }
 
 const SECTION_TITLES: Record<string, string> = {
@@ -21,17 +31,39 @@ const SECTION_TITLES: Record<string, string> = {
   quotes: 'ფასის შეთავაზებები'
 };
 
-export const SalesHistoryView: React.FC<Props> = ({ sales, settings, onRefreshData, activePage = 'sales_history' }) => {
+export const SalesHistoryView: React.FC<Props> = ({ sales, settings, onRefreshData, activePage = 'sales_history', user }) => {
   const [search, setSearch] = useState('');
   const [selectedSaleForPrint, setSelectedSaleForPrint] = useState<Sale | null>(null);
   const [showReturnModal, setShowReturnModal] = useState<Sale | null>(null);
+  const [deleting, setDeleting] = useState('');
+
+  const handleDelete = async (s: Sale) => {
+    const reason = window.prompt(
+      `ნამდვილად გსურთ გაყიდვა #${s.invoiceNo}-ის წაშლა?\nმარაგი და ფინანსური მონაცემები ავტომატურად დაკორექტირდება.\n\nმიუთითეთ წაშლის მიზეზი:`
+    );
+    if (reason === null) return;
+    if (!reason.trim()) { alert('წაშლის მიზეზი სავალდებულოა'); return; }
+    setDeleting(s.id);
+    try {
+      await api.deleteSale(s.id, {
+        reason,
+        actorId: user?.id,
+        actorName: user ? `${user.firstName} ${user.lastName}` : 'ადმინი'
+      });
+      onRefreshData();
+    } catch (e: any) {
+      alert(e?.message || 'წაშლა ვერ განხორციელდა');
+    } finally {
+      setDeleting('');
+    }
+  };
 
   const baseSales =
     activePage === 'held_sales'
       ? sales.filter((s) => s.isHeld)
       : activePage === 'returns'
       ? sales.filter((s) => s.status === 'returned')
-      : sales.filter((s) => !s.isHeld);
+      : sales.filter((s) => !s.isHeld && s.status !== 'cancelled');
 
   const filtered = baseSales.filter((s) => {
     const q = search.toLowerCase();
@@ -109,15 +141,9 @@ export const SalesHistoryView: React.FC<Props> = ({ sales, settings, onRefreshDa
                 <td className="p-3 text-slate-600">{s.userName}</td>
                 <td className="p-3 text-right font-extrabold text-blue-700">{formatMoney(s.grandTotal)}</td>
                 <td className="p-3 text-center">
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                      s.status === 'completed'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-amber-100 text-amber-800'
-                    }`}
-                  >
-                    {s.status === 'completed' ? 'დასრულებული' : 'დაბრუნებული'}
-                  </span>
+                  {(() => { const st = saleStatusLabel(s); return (
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${st.cls}`}>{st.text}</span>
+                  ); })()}
                 </td>
                 <td className="p-3 text-center">
                   <div className="flex items-center justify-center gap-1">
@@ -128,13 +154,23 @@ export const SalesHistoryView: React.FC<Props> = ({ sales, settings, onRefreshDa
                     >
                       <Printer className="w-4 h-4" />
                     </button>
-                    {s.status === 'completed' && (
+                    {s.status === 'active' && (
                       <button
                         onClick={() => setShowReturnModal(s)}
                         className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer"
                         title="დაბრუნება"
                       >
                         <RotateCcw className="w-4 h-4" />
+                      </button>
+                    )}
+                    {canManage(user) && !s.isHeld && (
+                      <button
+                        onClick={() => handleDelete(s)}
+                        disabled={deleting === s.id}
+                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg cursor-pointer disabled:opacity-50"
+                        title="გაყიდვის წაშლა"
+                      >
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     )}
                   </div>

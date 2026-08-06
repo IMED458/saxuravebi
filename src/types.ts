@@ -249,6 +249,9 @@ export interface Sale {
   isAnonymous?: boolean;
   sourceOrderId?: string;
   receivedByName?: string;
+  deletedAt?: string;
+  deletedBy?: string;
+  deletionReason?: string;
   createdAt: string;
 }
 

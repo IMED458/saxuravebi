@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Boxes, ArrowRightLeft, AlertTriangle, FileText, CheckCircle, RefreshCw } from 'lucide-react';
-import { Product, StockMovement } from '../types';
+import { Boxes, ArrowRightLeft, AlertTriangle, FileText, CheckCircle, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { Product, StockMovement, User } from '../types';
 import { api } from '../lib/api';
 import { formatMoney, formatDate } from '../lib/formatters';
 
@@ -8,12 +8,29 @@ interface Props {
   products: Product[];
   onRefreshData: () => void;
   activePage?: string;
+  user?: User;
 }
 
-export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage }) => {
+const canManageStock = (u?: User) =>
+  !!u && ['super_admin', 'owner', 'director', 'administrator', 'manager', 'warehouse'].includes(u.role);
+
+export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage, user }) => {
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [activeTab, setActiveTab] = useState<'current' | 'low' | 'movements'>('current');
   const [loading, setLoading] = useState(false);
+  const [adjustProduct, setAdjustProduct] = useState<Product | null>(null);
+
+  const actor = { actorId: user?.id, actorName: user ? `${user.firstName} ${user.lastName}` : 'ადმინი' };
+
+  const handleDeleteProduct = async (p: Product) => {
+    if (!window.confirm(`ნამდვილად გსურთ პროდუქტის "${p.name}" (${p.code}) წაშლა მარაგებიდან?`)) return;
+    try {
+      await api.deleteProduct(p.id, actor);
+      onRefreshData();
+    } catch (e: any) {
+      alert(e?.message || 'წაშლა ვერ განხორციელდა');
+    }
+  };
 
   useEffect(() => {
     if (activePage === 'low_stock') setActiveTab('low');
@@ -98,6 +115,7 @@ export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage
                 <th className="p-3 text-center">ნაშთი</th>
                 <th className="p-3 text-right">საშ. თვითღირებულება</th>
                 <th className="p-3 text-right">მარაგის სულ თვითღირებულება</th>
+                {canManageStock(user) && <th className="p-3 text-center">მოქმედება</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 font-medium">
@@ -118,6 +136,26 @@ export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage
                   <td className="p-3 text-right font-extrabold text-slate-900">
                     {formatMoney(p.currentStock * p.averageCostPrice)}
                   </td>
+                  {canManageStock(user) && (
+                    <td className="p-3">
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => setAdjustProduct(p)}
+                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer"
+                          title="მარაგის კორექტირება"
+                        >
+                          <SlidersHorizontal className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteProduct(p)}
+                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg cursor-pointer"
+                          title="პროდუქტის წაშლა"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -182,28 +220,104 @@ export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage
                   <td className="p-3 text-center">
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        m.type === 'intake'
+                        m.type === 'purchase'
                           ? 'bg-emerald-100 text-emerald-800'
                           : m.type === 'sale'
                           ? 'bg-blue-100 text-blue-800'
-                          : 'bg-red-100 text-red-800'
+                          : m.type === 'return'
+                          ? 'bg-purple-100 text-purple-800'
+                          : 'bg-slate-100 text-slate-700'
                       }`}
                     >
-                      {m.type === 'intake' ? 'შემოსვლა' : m.type === 'sale' ? 'გაყიდვა' : 'დაბრუნება'}
+                      {m.type === 'purchase' ? 'შემოსვლა' : m.type === 'sale' ? 'გაყიდვა' : m.type === 'return' ? 'დაბრუნება' : 'კორექტირება'}
                     </span>
                   </td>
                   <td className="p-3 text-center font-extrabold">
-                    <span className={m.quantityChange > 0 ? 'text-emerald-600' : 'text-red-600'}>
-                      {m.quantityChange > 0 ? `+${m.quantityChange}` : m.quantityChange}
+                    <span className={m.changeQuantity > 0 ? 'text-emerald-600' : 'text-red-600'}>
+                      {m.changeQuantity > 0 ? `+${m.changeQuantity}` : m.changeQuantity}
                     </span>
                   </td>
-                  <td className="p-3 text-slate-500">{m.reason || '-'}</td>
+                  <td className="p-3 text-slate-500">{m.note || '-'}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      {adjustProduct && (
+        <AdjustStockModal
+          product={adjustProduct}
+          actor={actor}
+          onClose={() => setAdjustProduct(null)}
+          onSaved={() => { onRefreshData(); setAdjustProduct(null); }}
+        />
+      )}
+    </div>
+  );
+};
+
+const AdjustStockModal: React.FC<{
+  product: Product;
+  actor: { actorId?: string; actorName: string };
+  onClose: () => void;
+  onSaved: () => void;
+}> = ({ product, actor, onClose, onSaved }) => {
+  const [newQty, setNewQty] = useState<string>(String(product.currentStock));
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newQty === '' || isNaN(parseFloat(newQty))) { alert('მიუთითეთ ახალი რაოდენობა'); return; }
+    setSaving(true);
+    try {
+      await api.adjustStock(product.id, { newQty: parseFloat(newQty), reason, ...actor });
+      onSaved();
+    } catch (e: any) {
+      alert(e?.message || 'კორექტირება ვერ განხორციელდა');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <form onSubmit={submit} className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+        <h3 className="text-base font-bold text-slate-900">მარაგის კორექტირება</h3>
+        <div className="text-slate-600">
+          <div className="font-bold text-slate-900">{product.name}</div>
+          <div className="font-mono text-blue-700">{product.code}</div>
+          <div className="mt-2">მიმდინარე მარაგი: <span className="font-bold text-slate-900">{product.currentStock} {product.unit}</span></div>
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">ახალი რაოდენობა *</label>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={newQty}
+            onChange={(e) => setNewQty(e.target.value.replace(/[^0-9.]/g, ''))}
+            placeholder="შეიყვანეთ რაოდენობა"
+            className="w-full border border-slate-300 rounded-xl p-2.5 font-bold outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">მიზეზი</label>
+          <input
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="მაგ: ინვენტარიზაციის სხვაობა"
+            className="w-full border border-slate-300 rounded-xl p-2.5 outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-semibold cursor-pointer">გაუქმება</button>
+          <button type="submit" disabled={saving} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer disabled:opacity-60">
+            {saving ? 'ინახება...' : 'შენახვა'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 };

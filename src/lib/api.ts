@@ -883,6 +883,130 @@ export const api = {
     return { success: true };
   },
 
+  /**
+   * Delete (void) a completed sale. Restores stock, reverses the cash
+   * transactions and customer debt/turnover, and soft-deletes the record so
+   * financial history stays intact. Runs as one atomic batch of writes.
+   */
+  async deleteSale(id: string, payload: any): Promise<{ success: boolean }> {
+    const data = await ready();
+    const { reason, actorId, actorName } = payload;
+    const sale = data.sales.find((s) => s.id === id);
+    if (!sale) throw new Error('გაყიდვა ვერ მოიძებნა');
+    if (sale.isHeld) { await store.del('sales', id); return { success: true }; }
+    if (sale.status === 'cancelled') throw new Error('ეს გაყიდვა უკვე წაშლილია');
+    if (!reason || !String(reason).trim()) throw new Error('მიუთითეთ წაშლის მიზეზი');
+
+    const nowIso = new Date().toISOString();
+    const changedProducts: Product[] = [];
+    const newMovements: StockMovement[] = [];
+
+    // 1) Restore stock for every sold item.
+    for (const it of sale.items) {
+      const prod = data.products.find((p) => p.id === it.productId);
+      if (!prod) continue;
+      const prevStock = prod.currentStock;
+      const newStock = prevStock + it.quantity;
+      prod.currentStock = newStock;
+      prod.totalSold = Math.max(0, (prod.totalSold || 0) - it.quantity);
+      prod.updatedAt = nowIso;
+      if (!changedProducts.find((p) => p.id === prod.id)) changedProducts.push(prod);
+      const mov: StockMovement = {
+        id: uid('mov'),
+        productId: prod.id,
+        productName: prod.name,
+        changeQuantity: it.quantity,
+        previousStock: prevStock,
+        newStock,
+        type: 'adjustment',
+        referenceNo: sale.invoiceNo,
+        note: `გაყიდვის წაშლით მარაგის აღდგენა (#${sale.invoiceNo})`,
+        date: nowIso,
+        userId: actorId || 'admin',
+        userName: actorName || 'ადმინი'
+      };
+      data.stockMovements.unshift(mov);
+      newMovements.push(mov);
+    }
+
+    // 2) Reverse the cash transactions created by this sale.
+    const relatedTx = data.cashTransactions.filter((t) => t.referenceNo === sale.invoiceNo && t.type === 'sale');
+    await Promise.all(relatedTx.map((t) => store.del('cashTransactions', t.id)));
+
+    // 3) Reverse customer debt / turnover.
+    let cust: Customer | undefined;
+    if (sale.customerId) {
+      cust = data.customers.find((c) => c.id === sale.customerId);
+      if (cust) {
+        cust.totalDebt = Math.max(0, cust.totalDebt - sale.balanceDue);
+        cust.totalPurchased = Math.max(0, cust.totalPurchased - sale.grandTotal);
+      }
+    }
+
+    // 4) Soft-delete the sale.
+    sale.status = 'cancelled';
+    sale.deletedAt = nowIso;
+    sale.deletedBy = actorName || 'ადმინი';
+    sale.deletionReason = String(reason).trim();
+
+    await Promise.all([
+      store.setMany('products', changedProducts),
+      store.setMany('stockMovements', newMovements),
+      cust ? store.set('customers', cust) : Promise.resolve(),
+      store.set('sales', sale)
+    ]);
+    await store.logAudit(
+      actorId || 'admin',
+      actorName || 'ადმინი',
+      'გაყიდვის წაშლა',
+      `წაიშალა გაყიდვა #${sale.invoiceNo} (${sale.customerName}), თანხა: ${sale.grandTotal} ₾, დაბრუნდა მარაგში ${sale.items.reduce((s, i) => s + i.quantity, 0)} ერთეული. მიზეზი: ${String(reason).trim()}`
+    );
+    return { success: true };
+  },
+
+  /** Delete a product (and its stock batches). Movement history is kept. */
+  async deleteProduct(id: string, payload: any): Promise<{ success: boolean }> {
+    const data = await ready();
+    const { actorId, actorName } = payload || {};
+    const prod = data.products.find((p) => p.id === id);
+    if (!prod) throw new Error('პროდუქტი ვერ მოიძებნა');
+    const batches = data.productBatches.filter((b) => b.productId === id);
+    await Promise.all([store.del('products', id), ...batches.map((b) => store.del('productBatches', b.id))]);
+    await store.logAudit(actorId || 'admin', actorName || 'ადმინი', 'პროდუქტის წაშლა', `წაიშალა პროდუქტი ${prod.name} (${prod.code})`);
+    return { success: true };
+  },
+
+  /** Direct stock correction to an exact quantity, with an audited reason. */
+  async adjustStock(id: string, payload: any): Promise<Product> {
+    const data = await ready();
+    const { newQty, reason, actorId, actorName } = payload;
+    const prod = data.products.find((p) => p.id === id);
+    if (!prod) throw new Error('პროდუქტი ვერ მოიძებნა');
+    const actual = Number(newQty);
+    if (isNaN(actual) || actual < 0) throw new Error('მიუთითეთ ვალიდური რაოდენობა');
+    const prevStock = prod.currentStock;
+    const diff = actual - prevStock;
+    prod.currentStock = actual;
+    prod.updatedAt = new Date().toISOString();
+    const mov: StockMovement = {
+      id: uid('mov'),
+      productId: prod.id,
+      productName: prod.name,
+      changeQuantity: diff,
+      previousStock: prevStock,
+      newStock: actual,
+      type: 'adjustment',
+      note: `მარაგის კორექტირება${reason ? `: ${reason}` : ''}`,
+      date: new Date().toISOString(),
+      userId: actorId || 'admin',
+      userName: actorName || 'ადმინი'
+    };
+    data.stockMovements.unshift(mov);
+    await Promise.all([store.set('products', prod), store.set('stockMovements', mov)]);
+    await store.logAudit(actorId || 'admin', actorName || 'ადმინი', 'მარაგის კორექტირება', `${prod.code}: ${prevStock} → ${actual}${reason ? `. მიზეზი: ${reason}` : ''}`);
+    return prod;
+  },
+
   // ------------------------------------------------------------- RETURNS ----
   async createReturn(payload: any): Promise<ReturnDoc> {
     const data = await ready();

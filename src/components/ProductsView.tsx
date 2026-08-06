@@ -9,6 +9,7 @@ import {
   Edit,
   Eye,
   Pencil,
+  Trash2,
   ImageIcon,
   TrendingUp,
   AlertTriangle,
@@ -17,7 +18,7 @@ import {
   History,
   X
 } from 'lucide-react';
-import { Product, Category, Unit, Supplier } from '../types';
+import { Product, Category, Unit, Supplier, User } from '../types';
 import { api } from '../lib/api';
 import { formatMoney, formatNum, formatDate } from '../lib/formatters';
 import { exportToExcel } from '../lib/exportUtils';
@@ -29,7 +30,11 @@ interface Props {
   suppliers: Supplier[];
   onRefreshData: () => void;
   activePage?: string;
+  user?: User;
 }
+
+const canManageProducts = (u?: User) =>
+  !!u && ['super_admin', 'owner', 'director', 'administrator'].includes(u.role);
 
 export const ProductsView: React.FC<Props> = ({
   products,
@@ -37,8 +42,18 @@ export const ProductsView: React.FC<Props> = ({
   units,
   suppliers,
   onRefreshData,
-  activePage = 'products_list'
+  activePage = 'products_list',
+  user
 }) => {
+  const handleDeleteProduct = async (p: Product) => {
+    if (!window.confirm(`ნამდვილად გსურთ პროდუქტის "${p.name}" (${p.code}) წაშლა?`)) return;
+    try {
+      await api.deleteProduct(p.id, { actorId: user?.id, actorName: user ? `${user.firstName} ${user.lastName}` : 'ადმინი' });
+      onRefreshData();
+    } catch (e: any) {
+      alert(e?.message || 'წაშლა ვერ განხორციელდა');
+    }
+  };
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
@@ -264,6 +279,15 @@ export const ProductsView: React.FC<Props> = ({
                           >
                             <Pencil className="w-4 h-4" />
                           </button>
+                          {canManageProducts(user) && (
+                            <button
+                              onClick={() => handleDeleteProduct(p)}
+                              className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                              title="პროდუქტის წაშლა"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                           <button
                             onClick={() => setShowAddStockModal(p)}
                             className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition cursor-pointer font-bold text-xs flex items-center gap-1"
