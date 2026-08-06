@@ -56,6 +56,31 @@ export const POSView: React.FC<Props> = ({
   // Selected Customer
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [custQuery, setCustQuery] = useState('');
+  const [custOpen, setCustOpen] = useState(false);
+
+  const custDisplay = (c: Customer) =>
+    c.type === 'company' ? c.companyName || c.name : `${c.name} ${c.lastName || ''}`.trim();
+
+  // Keep the search box text in sync with the chosen customer (unless actively typing).
+  useEffect(() => {
+    if (!custOpen) setCustQuery(selectedCustomer ? custDisplay(selectedCustomer) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCustomer]);
+
+  const customerResults = customers
+    .filter((c) => {
+      const q = custQuery.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        c.name.toLowerCase().includes(q) ||
+        (c.lastName || '').toLowerCase().includes(q) ||
+        c.phone.includes(q) ||
+        (c.companyName || '').toLowerCase().includes(q) ||
+        (c.taxId || '').includes(q)
+      );
+    })
+    .slice(0, 40);
 
   // Cart State
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -481,21 +506,61 @@ export const POSView: React.FC<Props> = ({
           <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center flex-shrink-0">
             <UserIcon className="w-4 h-4" />
           </div>
-          <select
-            value={selectedCustomer?.id || ''}
-            onChange={(e) => {
-              const cust = customers.find((c) => c.id === e.target.value);
-              setSelectedCustomer(cust || null);
-            }}
-            className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">👤 კლიენტის გარეშე (ანონიმური)</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.type === 'company' ? `🏢 ${c.companyName || c.name}` : `👤 ${c.name} ${c.lastName || ''}`} ({c.phone})
-              </option>
-            ))}
-          </select>
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={custQuery}
+              onFocus={() => { setCustOpen(true); setCustQuery(''); }}
+              onChange={(e) => { setCustQuery(e.target.value); setCustOpen(true); }}
+              onBlur={() => setTimeout(() => setCustOpen(false), 150)}
+              placeholder="👤 კლიენტის ძებნა (სახელი / ტელეფონი) — ან ანონიმური"
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            {custOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-40 max-h-72 overflow-y-auto">
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setSelectedCustomer(null); setCustOpen(false); setCustQuery(''); }}
+                  className={`w-full text-left px-3 py-2 text-xs font-semibold hover:bg-slate-50 border-b border-slate-100 ${!selectedCustomer ? 'text-blue-600' : 'text-slate-600'}`}
+                >
+                  👤 კლიენტის გარეშე (ანონიმური)
+                </button>
+                {customerResults.length === 0 ? (
+                  <div className="px-3 py-3 text-[11px] text-slate-400">კლიენტი ვერ მოიძებნა — გამოიყენეთ „+ ახალი კლიენტი"</div>
+                ) : (
+                  customerResults.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setSelectedCustomer(c);
+                        setCustQuery(custDisplay(c));
+                        setCustOpen(false);
+                        if (c.address) {
+                          setDeliveryDetails((prev) => ({
+                            ...prev,
+                            address: c.address || '',
+                            recipientName: custDisplay(c),
+                            recipientPhone: c.phone
+                          }));
+                        }
+                      }}
+                      className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-50 last:border-0 flex items-center justify-between gap-2"
+                    >
+                      <span className="min-w-0">
+                        <span className="block text-xs font-bold text-slate-900 truncate">
+                          {c.type === 'company' ? `🏢 ${c.companyName || c.name}` : `👤 ${c.name} ${c.lastName || ''}`}
+                        </span>
+                        <span className="block text-[10px] text-slate-500">{c.phone}{c.totalDebt > 0 ? ` · ვალი: ${formatMoney(c.totalDebt)}` : ''}</span>
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           <button
             onClick={() => setShowAddCustomerModal(true)}
             className="w-9 h-9 bg-blue-600 hover:bg-blue-700 text-white rounded-xl flex items-center justify-center flex-shrink-0 transition cursor-pointer"
