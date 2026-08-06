@@ -23,7 +23,7 @@ interface Props {
 }
 
 export const Dashboard: React.FC<Props> = ({ products, sales, customers, suppliers, onNavigate }) => {
-  const completedSales = sales.filter((s) => !s.isHeld);
+  const completedSales = sales.filter((s) => !s.isHeld && s.status !== 'cancelled');
 
   // Today Sales
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -42,8 +42,8 @@ export const Dashboard: React.FC<Props> = ({ products, sales, customers, supplie
   // Customer Debts Total
   const totalCustomerDebt = customers.reduce((sum, c) => sum + (c.totalDebt || 0), 0);
 
-  // Supplier Debts Total
-  const totalSupplierDebt = suppliers.reduce((sum, s) => sum + (s.totalDebt || 0), 0);
+  // Supplier Debts Total (Supplier stores what we owe in `balance`)
+  const totalSupplierDebt = suppliers.reduce((sum, s) => sum + (s.balance || 0), 0);
 
   // Low Stock Count
   const lowStockProducts = products.filter((p) => p.currentStock <= p.minStock);

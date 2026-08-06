@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Boxes, ArrowRightLeft, AlertTriangle, FileText, CheckCircle, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
-import { Product, StockMovement, User } from '../types';
+import { Product, StockMovement, ProductBatch, User } from '../types';
 import { api } from '../lib/api';
 import { formatMoney, formatDate } from '../lib/formatters';
 
@@ -16,7 +16,8 @@ const canManageStock = (u?: User) =>
 
 export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage, user }) => {
   const [movements, setMovements] = useState<StockMovement[]>([]);
-  const [activeTab, setActiveTab] = useState<'current' | 'low' | 'movements'>('current');
+  const [batches, setBatches] = useState<ProductBatch[]>([]);
+  const [activeTab, setActiveTab] = useState<'current' | 'low' | 'intakes' | 'movements'>('current');
   const [loading, setLoading] = useState(false);
   const [adjustProduct, setAdjustProduct] = useState<Product | null>(null);
 
@@ -35,11 +36,13 @@ export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage
   useEffect(() => {
     if (activePage === 'low_stock') setActiveTab('low');
     else if (activePage === 'stock_movements') setActiveTab('movements');
-    else if (activePage === 'stock_list' || activePage === 'stock_intake' || activePage === 'stocktakes' || activePage === 'stock_transfers') setActiveTab('current');
+    else if (activePage === 'stock_intake') setActiveTab('intakes');
+    else if (activePage === 'stock_list' || activePage === 'stocktakes' || activePage === 'stock_transfers') setActiveTab('current');
   }, [activePage]);
 
   useEffect(() => {
     loadMovements();
+    api.getProductBatches().then(setBatches).catch(() => {});
   }, []);
 
   const loadMovements = async () => {
@@ -95,6 +98,14 @@ export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage
           ⚠️ დაბალი მარაგი ({lowStockProducts.length})
         </button>
         <button
+          onClick={() => setActiveTab('intakes')}
+          className={`py-3.5 px-4 border-b-2 cursor-pointer transition ${
+            activeTab === 'intakes' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-500'
+          }`}
+        >
+          📥 შემოსვლები ({batches.length})
+        </button>
+        <button
           onClick={() => setActiveTab('movements')}
           className={`py-3.5 px-4 border-b-2 cursor-pointer transition ${
             activeTab === 'movements' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'
@@ -103,6 +114,52 @@ export const StockView: React.FC<Props> = ({ products, onRefreshData, activePage
           🔄 მოძრაობის ისტორია
         </button>
       </div>
+
+      {/* Tab: Intakes / purchase history (what was bought, when, from whom, at what cost) */}
+      {activeTab === 'intakes' && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px]">
+                  <th className="p-3">თარიღი</th>
+                  <th className="p-3">პროდუქტი</th>
+                  <th className="p-3">მომწოდებელი</th>
+                  <th className="p-3">დოკუმენტი</th>
+                  <th className="p-3 text-center">რაოდენობა</th>
+                  <th className="p-3 text-right">ასაღები ფასი</th>
+                  <th className="p-3 text-right">ჯამური ღირებულება</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 font-medium">
+                {batches.length === 0 ? (
+                  <tr><td colSpan={7} className="p-8 text-center text-slate-400">შემოსვლები ჯერ არ არის</td></tr>
+                ) : (
+                  [...batches]
+                    .sort((a, b) => new Date(b.receivedDate).getTime() - new Date(a.receivedDate).getTime())
+                    .map((b) => {
+                      const prod = products.find((p) => p.id === b.productId);
+                      return (
+                        <tr key={b.id} className="hover:bg-slate-50">
+                          <td className="p-3 text-slate-500 whitespace-nowrap">{formatDate(b.receivedDate)}</td>
+                          <td className="p-3">
+                            <div className="font-bold text-slate-900">{prod?.name || '—'}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{prod?.code || ''}</div>
+                          </td>
+                          <td className="p-3 text-slate-600">{b.supplierName || '—'}</td>
+                          <td className="p-3 text-slate-400 font-mono text-[11px]">{b.documentNo || '—'}</td>
+                          <td className="p-3 text-center font-bold text-emerald-700">{b.receivedQuantity} {prod?.unit || ''}</td>
+                          <td className="p-3 text-right font-semibold text-slate-700">{formatMoney(b.unitCost)}</td>
+                          <td className="p-3 text-right font-extrabold text-slate-900">{formatMoney(b.receivedQuantity * b.unitCost)}</td>
+                        </tr>
+                      );
+                    })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Tab 1: Current Stock */}
       {activeTab === 'current' && (

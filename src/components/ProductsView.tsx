@@ -19,6 +19,7 @@ import {
   X
 } from 'lucide-react';
 import { Product, Category, Unit, Supplier, User } from '../types';
+import { EditableNumber } from './EditableNumber';
 import { api } from '../lib/api';
 import { formatMoney, formatNum, formatDate } from '../lib/formatters';
 import { exportToExcel } from '../lib/exportUtils';
@@ -104,7 +105,7 @@ export const ProductsView: React.FC<Props> = ({
   };
 
   if (activePage === 'categories') {
-    return <CategoriesManager categories={categories} products={products} onRefreshData={onRefreshData} />;
+    return <CategoriesManager categories={categories} products={products} onRefreshData={onRefreshData} user={user} />;
   }
 
   return (
@@ -252,7 +253,16 @@ export const ProductsView: React.FC<Props> = ({
                       </td>
 
                       <td className="p-3 text-right font-semibold text-slate-600">
-                        {formatMoney(p.averageCostPrice)}
+                        {p.averageCostPrice > 0 ? (
+                          formatMoney(p.averageCostPrice)
+                        ) : (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold cursor-help"
+                            title="პროდუქტი ასაღები ფასის გარეშეა — დააჭირეთ ✏️ რედაქტირებას და მიუთითეთ ასაღები ფასი"
+                          >
+                            <AlertTriangle className="w-3 h-3" /> ასაღები ფასი არ არის
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 text-right font-extrabold text-blue-700">
                         {formatMoney(p.sellingPrice)}
@@ -382,10 +392,16 @@ const CategoriesManager: React.FC<{
   categories: Category[];
   products: Product[];
   onRefreshData: () => void;
-}> = ({ categories, products, onRefreshData }) => {
+  user?: User;
+}> = ({ categories, products, onRefreshData, user }) => {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState<Category | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editCode, setEditCode] = useState('');
+
+  const actor = { actorId: user?.id, actorName: user ? `${user.firstName} ${user.lastName}` : 'ადმინი' };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -400,6 +416,42 @@ const CategoriesManager: React.FC<{
       alert('შეცდომა: ' + err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const startEdit = (c: Category) => { setEditing(c); setEditName(c.name); setEditCode(c.code); };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    try {
+      await api.updateCategory(editing.id, { name: editName, code: editCode });
+      setEditing(null);
+      onRefreshData();
+    } catch (err: any) {
+      alert('შეცდომა: ' + err.message);
+    }
+  };
+
+  const handleDelete = async (c: Category) => {
+    const count = products.filter((p) => p.categoryId === c.id).length;
+    let moveToCategoryId: string | undefined;
+    if (count > 0) {
+      const others = categories.filter((x) => x.id !== c.id);
+      if (others.length === 0) { alert('ვერ წაიშლება — ეს ერთადერთი კატეგორიაა, პროდუქტების გადასატანად ჯერ სხვა კატეგორია შექმენით'); return; }
+      const list = others.map((x, i) => `${i + 1}. ${x.name}`).join('\n');
+      const ans = window.prompt(`კატეგორია "${c.name}"-ში ${count} პროდუქტია.\nსად გადავიტანოთ ისინი? ჩაწერეთ ნომერი:\n\n${list}`);
+      if (ans === null) return;
+      const idx = parseInt(ans, 10) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= others.length) { alert('არასწორი არჩევანი'); return; }
+      moveToCategoryId = others[idx].id;
+    } else {
+      if (!window.confirm(`ნამდვილად გსურთ კატეგორია "${c.name}"-ის წაშლა?`)) return;
+    }
+    try {
+      await api.deleteCategory(c.id, { moveToCategoryId, ...actor });
+      onRefreshData();
+    } catch (err: any) {
+      alert('შეცდომა: ' + err.message);
     }
   };
 
@@ -431,16 +483,41 @@ const CategoriesManager: React.FC<{
               <th className="p-3">კოდი</th>
               <th className="p-3">დასახელება</th>
               <th className="p-3 text-center">პროდუქტების რაოდენობა</th>
+              <th className="p-3 text-center">მოქმედება</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 font-medium">
             {categories.map((c) => (
               <tr key={c.id} className="hover:bg-slate-50">
-                <td className="p-3 font-mono font-bold text-blue-700">{c.code}</td>
-                <td className="p-3 font-bold text-slate-900">{c.name}</td>
-                <td className="p-3 text-center font-semibold text-slate-600">
-                  {products.filter((p) => p.categoryId === c.id).length}
-                </td>
+                {editing?.id === c.id ? (
+                  <>
+                    <td className="p-2"><input value={editCode} onChange={(e) => setEditCode(e.target.value)} className="w-20 border border-slate-300 rounded-lg p-1.5 text-xs font-mono outline-none" /></td>
+                    <td className="p-2"><input value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full border border-slate-300 rounded-lg p-1.5 text-xs font-bold outline-none" /></td>
+                    <td className="p-3 text-center font-semibold text-slate-600">{products.filter((p) => p.categoryId === c.id).length}</td>
+                    <td className="p-3">
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={saveEdit} className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-[11px] font-bold cursor-pointer">შენახვა</button>
+                        <button onClick={() => setEditing(null)} className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-[11px] font-bold cursor-pointer">გაუქმება</button>
+                      </div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="p-3 font-mono font-bold text-blue-700">{c.code}</td>
+                    <td className="p-3 font-bold text-slate-900">{c.name}</td>
+                    <td className="p-3 text-center font-semibold text-slate-600">{products.filter((p) => p.categoryId === c.id).length}</td>
+                    <td className="p-3">
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => startEdit(c)} className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg cursor-pointer" title="რედაქტირება">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleDelete(c)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg cursor-pointer" title="წაშლა">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -856,7 +933,8 @@ const AddProductModal: React.FC<{
   const [categoryId, setCategoryId] = useState(editProduct?.categoryId || categories[0]?.id || '');
   const [unit, setUnit] = useState(editProduct?.unit || units[0]?.name || 'ცალი');
   const [sellingPrice, setSellingPrice] = useState<number>(editProduct?.sellingPrice || 0);
-  const [minStock, setMinStock] = useState<number>(editProduct?.minStock ?? 5);
+  const [costPrice, setCostPrice] = useState<number>(editProduct?.averageCostPrice || 0);
+  const [minStock, setMinStock] = useState<number>(editProduct?.minStock ?? 0);
   const [initialStock, setInitialStock] = useState<number>(0);
   const [initialCostPrice, setInitialCostPrice] = useState<number>(0);
   const [supplierId, setSupplierId] = useState<string>(editProduct?.supplierId || '');
@@ -873,11 +951,16 @@ const AddProductModal: React.FC<{
       return;
     }
 
+    // Warn when a product is registered/kept without a purchase (cost) price.
+    if (!isEdit && initialStock > 0 && initialCostPrice <= 0) {
+      if (!window.confirm('პროდუქტი ემატება ასაღები ფასის გარეშე (0 ₾) — მოგება ვერ დაითვლება სწორად.\n\nგსურთ მაინც გაგრძელება?')) return;
+    }
+
     setLoading(true);
     try {
       if (isEdit) {
         await api.updateProduct(editProduct!.id, {
-          name, code, categoryId, unit, sellingPrice, minStock, supplierId, barcode, description: comment, image: imageUrl.trim()
+          name, code, categoryId, unit, sellingPrice, costPrice, minStock, supplierId, barcode, description: comment, image: imageUrl.trim()
         });
       } else {
         await api.createProduct({
@@ -971,27 +1054,34 @@ const AddProductModal: React.FC<{
             </div>
           </div>
 
-          <div className={`grid grid-cols-1 ${isEdit ? '' : 'sm:grid-cols-3'} gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200`}>
+          <div className={`grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200`}>
             <div>
               <label className="block text-[10px] font-bold text-slate-700 mb-0.5">გასაყიდი ფასი (₾) *</label>
-              <input
-                type="number"
-                step="any"
-                required
+              <EditableNumber
                 value={sellingPrice}
-                onChange={(e) => setSellingPrice(parseFloat(e.target.value) || 0)}
+                onChange={setSellingPrice}
+                placeholder="შეიყვანეთ ფასი"
                 className="w-full bg-white border border-slate-300 rounded-xl p-2 font-black text-blue-700 outline-none text-sm"
               />
             </div>
 
-            {!isEdit && (
+            {isEdit ? (
+              <div>
+                <label className="block text-[10px] font-bold text-slate-700 mb-0.5">ასაღები ფასი (₾)</label>
+                <EditableNumber
+                  value={costPrice}
+                  onChange={setCostPrice}
+                  placeholder="შეიყვანეთ ასაღები ფასი"
+                  className="w-full bg-white border border-slate-300 rounded-xl p-2 font-bold outline-none text-sm"
+                />
+              </div>
+            ) : (
               <div>
                 <label className="block text-[10px] font-bold text-slate-700 mb-0.5">საწყისი ასაღები ფასი (₾)</label>
-                <input
-                  type="number"
-                  step="any"
+                <EditableNumber
                   value={initialCostPrice}
-                  onChange={(e) => setInitialCostPrice(parseFloat(e.target.value) || 0)}
+                  onChange={setInitialCostPrice}
+                  placeholder="შეიყვანეთ ასაღები ფასი"
                   className="w-full bg-white border border-slate-300 rounded-xl p-2 font-bold outline-none text-sm"
                 />
               </div>
@@ -1000,11 +1090,10 @@ const AddProductModal: React.FC<{
             {!isEdit && (
               <div>
                 <label className="block text-[10px] font-bold text-slate-700 mb-0.5">საწყისი ნაშთი/მარაგი</label>
-                <input
-                  type="number"
-                  step="any"
+                <EditableNumber
                   value={initialStock}
-                  onChange={(e) => setInitialStock(parseFloat(e.target.value) || 0)}
+                  onChange={setInitialStock}
+                  placeholder="შეიყვანეთ რაოდენობა"
                   className="w-full bg-white border border-slate-300 rounded-xl p-2 font-bold text-emerald-700 outline-none text-sm"
                 />
               </div>
@@ -1014,10 +1103,10 @@ const AddProductModal: React.FC<{
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-[10px] font-bold text-slate-500 mb-0.5">მინიმალური მარაგი</label>
-              <input
-                type="number"
+              <EditableNumber
                 value={minStock}
-                onChange={(e) => setMinStock(parseFloat(e.target.value) || 0)}
+                onChange={setMinStock}
+                placeholder="შეიყვანეთ რაოდენობა"
                 className="w-full border border-slate-300 rounded-xl p-2.5 outline-none font-bold"
               />
             </div>

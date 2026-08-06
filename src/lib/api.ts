@@ -216,10 +216,18 @@ export const api = {
     const prod = data.products.find((p) => p.id === id);
     if (!prod) throw new Error('პროდუქტი ვერ მოიძებნა');
     const {
-      name, code, categoryId, unit, sellingPrice, minStock, status, barcode, sku, brand,
+      name, code, categoryId, unit, sellingPrice, costPrice, minStock, status, barcode, sku, brand,
       supplierId, color, size, thickness, length, width, weight, description, note, image,
       gallery, actorName, actorId, reason
     } = payload;
+
+    // Admin cost-price correction (updates average + last cost).
+    if (costPrice !== undefined && Number(costPrice) !== prod.averageCostPrice) {
+      const oldCost = prod.averageCostPrice;
+      prod.averageCostPrice = Number(costPrice);
+      prod.lastCostPrice = Number(costPrice);
+      await store.logAudit(actorId || 'admin', actorName || 'ადმინი', 'ასაღები ფასის კორექტირება', `${prod.code}: ${oldCost} → ${Number(costPrice)} ₾`);
+    }
 
     if (code && code.trim().toUpperCase() !== prod.code) {
       if (data.products.some((p) => p.id !== prod.id && p.code.toLowerCase() === code.trim().toLowerCase())) {
@@ -929,8 +937,8 @@ export const api = {
       newMovements.push(mov);
     }
 
-    // 2) Reverse the cash transactions created by this sale.
-    const relatedTx = data.cashTransactions.filter((t) => t.referenceNo === sale.invoiceNo && t.type === 'sale');
+    // 2) Reverse ALL cash transactions created by this sale (any type).
+    const relatedTx = data.cashTransactions.filter((t) => t.referenceNo === sale.invoiceNo);
     await Promise.all(relatedTx.map((t) => store.del('cashTransactions', t.id)));
 
     // 3) Reverse customer debt / turnover.
@@ -1628,6 +1636,11 @@ export const api = {
     return data.returns;
   },
 
+  async getProductBatches(): Promise<ProductBatch[]> {
+    const data = await ready();
+    return data.productBatches;
+  },
+
   // --------------------------------------------------------------- STOCK ----
   async getStockMovements(): Promise<StockMovement[]> {
     const data = await ready();
@@ -1716,6 +1729,38 @@ export const api = {
     data.categories.push(newCat);
     await store.set('categories', newCat);
     return newCat;
+  },
+
+  async updateCategory(id: string, payload: any): Promise<Category> {
+    const data = await ready();
+    const cat = data.categories.find((c) => c.id === id);
+    if (!cat) throw new Error('კატეგორია ვერ მოიძებნა');
+    const { name, code, description } = payload;
+    if (name) cat.name = name.trim();
+    if (code !== undefined) cat.code = code.trim().toUpperCase();
+    if (description !== undefined) cat.description = description;
+    await store.set('categories', cat);
+    return cat;
+  },
+
+  /**
+   * Delete a category. If products are attached, `moveToCategoryId` must be
+   * provided so those products are reassigned first (no orphaned products).
+   */
+  async deleteCategory(id: string, payload: any): Promise<{ success: boolean }> {
+    const data = await ready();
+    const cat = data.categories.find((c) => c.id === id);
+    if (!cat) throw new Error('კატეგორია ვერ მოიძებნა');
+    const { moveToCategoryId, actorId, actorName } = payload || {};
+    const attached = data.products.filter((p) => p.categoryId === id);
+    if (attached.length > 0) {
+      if (!moveToCategoryId) throw new Error(`ამ კატეგორიაში ${attached.length} პროდუქტია. ჯერ აირჩიეთ სად გადავიტანოთ`);
+      attached.forEach((p) => (p.categoryId = moveToCategoryId));
+      await store.setMany('products', attached);
+    }
+    await store.del('categories', id);
+    await store.logAudit(actorId || 'admin', actorName || 'ადმინი', 'კატეგორიის წაშლა', `წაიშალა კატეგორია ${cat.name}${attached.length ? `, ${attached.length} პროდუქტი გადავიდა` : ''}`);
+    return { success: true };
   },
 
   async getUnits(): Promise<Unit[]> {

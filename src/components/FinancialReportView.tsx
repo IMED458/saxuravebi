@@ -12,7 +12,7 @@ import {
   FileSpreadsheet,
   Printer
 } from 'lucide-react';
-import { Sale, Product, Customer, Supplier, Expense, Purchase, CashTransaction, ReturnDoc, PaymentMethod } from '../types';
+import { Sale, Product, Customer, Supplier, Expense, Purchase, CashTransaction, ReturnDoc, ProductBatch, PaymentMethod } from '../types';
 import { api } from '../lib/api';
 import { formatMoney, formatNum } from '../lib/formatters';
 import { exportSheets } from '../lib/exportUtils';
@@ -127,11 +127,13 @@ export const FinancialReportView: React.FC<Props> = ({ sales, products, customer
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [transactions, setTransactions] = useState<CashTransaction[]>([]);
   const [returns, setReturns] = useState<ReturnDoc[]>([]);
+  const [batches, setBatches] = useState<ProductBatch[]>([]);
 
   useEffect(() => {
     api.getPurchases().then(setPurchases).catch(() => {});
     api.getTransactions().then(setTransactions).catch(() => {});
     api.getReturns().then(setReturns).catch(() => {});
+    api.getProductBatches().then(setBatches).catch(() => {});
   }, []);
 
   const range = useMemo(() => computeRange(period, customFrom, customTo), [period, customFrom, customTo]);
@@ -182,16 +184,19 @@ export const FinancialReportView: React.FC<Props> = ({ sales, products, customer
       }
     });
 
-    // --- Purchases ---
-    const periodPurchases = purchases.filter((p) => inRange(p.date) && p.status !== 'cancelled');
+    // --- Purchases / stock spending ---
+    // Stock batches are the single source of truth for what we bought (initial
+    // stock, "+ მარაგის დამატება", and full purchases all create batches).
+    const periodBatches = batches.filter((b) => inRange(b.receivedDate));
     let purchaseTotal = 0;
     let purchaseUnits = 0;
-    let purchasePaid = 0;
-    periodPurchases.forEach((p) => {
-      purchaseTotal += p.totalAmount;
-      purchasePaid += p.paidAmount;
-      p.items.forEach((it) => (purchaseUnits += it.quantity));
+    periodBatches.forEach((b) => {
+      purchaseTotal += b.receivedQuantity * b.unitCost;
+      purchaseUnits += b.receivedQuantity;
     });
+    const periodPurchases = purchases.filter((p) => inRange(p.date) && p.status !== 'cancelled');
+    let purchasePaid = 0;
+    periodPurchases.forEach((p) => (purchasePaid += p.paidAmount));
 
     // --- Returns ---
     const periodReturns = returns.filter((r) => inRange(r.date));
@@ -226,13 +231,12 @@ export const FinancialReportView: React.FC<Props> = ({ sales, products, customer
         };
       return prodMap[id];
     };
-    periodPurchases.forEach((p) =>
-      p.items.forEach((it) => {
-        const r = ensure(it.productId, it.productName, it.productCode);
-        r.purchasedQty += it.quantity;
-        r.purchaseAmount += it.total;
-      })
-    );
+    periodBatches.forEach((b) => {
+      const prod = products.find((p) => p.id === b.productId);
+      const r = ensure(b.productId, prod?.name || b.productId, prod?.code || '');
+      r.purchasedQty += b.receivedQuantity;
+      r.purchaseAmount += b.receivedQuantity * b.unitCost;
+    });
     periodSales.forEach((s) =>
       s.items.forEach((it) => {
         const r = ensure(it.productId, it.productName, it.productCode);
@@ -268,7 +272,7 @@ export const FinancialReportView: React.FC<Props> = ({ sales, products, customer
       productRows,
       creditSales: salesValue - (byMethod['debt'] ? 0 : 0) // placeholder; credit = unpaid part below
     };
-  }, [sales, purchases, transactions, returns, expenses, products, customers, suppliers, range]);
+  }, [sales, purchases, transactions, returns, batches, expenses, products, customers, suppliers, range]);
 
   // Money still owed from period sales (accrued - received on those sales)
   const unpaidFromSales = useMemo(() => {
