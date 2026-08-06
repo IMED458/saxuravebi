@@ -6,16 +6,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: pages-deploy
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,18 +22,10 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
+      # Publishes the built site to the `gh-pages` branch. This avoids the
+      # Pages deployment-API "in progress deployment" lock that was blocking
+      # the previous method.
+      - uses: peaceiris/actions-gh-pages@v4
         with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
-        with:
-          timeout: 600000
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
