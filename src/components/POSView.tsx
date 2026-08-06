@@ -353,8 +353,12 @@ export const POSView: React.FC<Props> = ({
     } else setNumBuffer('');
   };
 
-  // Handle Order Creation (Stock NOT deducted). Payment is explicit (unpaid by default).
-  const handleCreateOrder = async (paidAmount: number, method: PaymentMethod) => {
+  // Handle Order Creation (Stock NOT deducted). Payment + transportation explicit.
+  const handleCreateOrder = async (
+    paidAmount: number,
+    method: PaymentMethod,
+    delivery?: { type: 'pickup' | 'delivery'; fee: number; address: string; recipientName: string; recipientPhone: string; comment: string }
+  ) => {
     if (cart.length === 0) {
       setError('კალათა ცარიელია, დაამატეთ პროდუქტები.');
       return;
@@ -385,10 +389,12 @@ export const POSView: React.FC<Props> = ({
         })),
         paidAmount: initialPaid,
         paymentMethod: method,
-        deliveryAddress: deliveryType === 'delivery' ? deliveryDetails.address : undefined,
-        recipientName: deliveryType === 'delivery' ? deliveryDetails.recipientName : undefined,
-        recipientPhone: deliveryType === 'delivery' ? deliveryDetails.recipientPhone : undefined,
-        comment: deliveryDetails.comment || '',
+        deliveryType: delivery?.type || 'pickup',
+        deliveryFee: delivery?.type === 'delivery' ? delivery.fee : 0,
+        deliveryAddress: delivery?.type === 'delivery' ? delivery.address : undefined,
+        recipientName: delivery?.type === 'delivery' ? delivery.recipientName : undefined,
+        recipientPhone: delivery?.type === 'delivery' ? delivery.recipientPhone : undefined,
+        comment: delivery?.comment || '',
         userId: user.id,
         userName: `${user.firstName} ${user.lastName}`
       };
@@ -863,6 +869,80 @@ export const POSView: React.FC<Props> = ({
               </div>
             </div>
 
+            {/* Optional: customer + transportation (drives the printed documents) */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 mb-6 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Customer (optional) */}
+                <div className="relative">
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">კლიენტი (არასავალდებულო)</label>
+                  <input
+                    type="text"
+                    value={custQuery}
+                    onFocus={() => { setCustOpen(true); setCustQuery(''); }}
+                    onChange={(e) => { setCustQuery(e.target.value); setCustOpen(true); }}
+                    onBlur={() => setTimeout(() => setCustOpen(false), 150)}
+                    placeholder="👤 ძებნა სახელით/ტელეფონით — ან ანონიმური"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-semibold outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {custOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-60 overflow-y-auto">
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { setSelectedCustomer(null); setCustOpen(false); setCustQuery(''); }} className="w-full text-left px-3 py-2 text-xs font-semibold hover:bg-slate-50 border-b border-slate-100 text-slate-600">
+                        👤 კლიენტის გარეშე (ანონიმური)
+                      </button>
+                      {customerResults.map((c) => (
+                        <button key={c.id} type="button" onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setSelectedCustomer(c); setCustQuery(custDisplay(c)); setCustOpen(false);
+                            if (c.address) setDeliveryDetails((prev) => ({ ...prev, address: c.address || '', recipientName: custDisplay(c), recipientPhone: c.phone }));
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-slate-50 last:border-0">
+                          <span className="block text-xs font-bold text-slate-900 truncate">{c.type === 'company' ? `🏢 ${c.companyName || c.name}` : `👤 ${c.name} ${c.lastName || ''}`}</span>
+                          <span className="block text-[10px] text-slate-500">{c.phone}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Delivery type (optional) */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">მიწოდება</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => setDeliveryType('pickup')}
+                      className={`py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${deliveryType === 'pickup' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-white border-slate-300 text-slate-600'}`}>
+                      🏢 ადგილიდან გატანა
+                    </button>
+                    <button type="button" onClick={() => setDeliveryType('delivery')}
+                      className={`py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${deliveryType === 'delivery' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-white border-slate-300 text-slate-600'}`}>
+                      🚚 ტრანსპორტირება
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {deliveryType === 'delivery' && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                  <input type="text" placeholder="მისატანი მისამართი" value={deliveryDetails.address}
+                    onChange={(e) => setDeliveryDetails({ ...deliveryDetails, address: e.target.value })}
+                    className="sm:col-span-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500" />
+                  <div>
+                    <EditableNumber value={deliveryDetails.fee} onChange={(v) => setDeliveryDetails({ ...deliveryDetails, fee: v })}
+                      placeholder="ტრანსპ. ფასი (₾)"
+                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <input type="text" placeholder="მიმღები" value={deliveryDetails.recipientName}
+                    onChange={(e) => setDeliveryDetails({ ...deliveryDetails, recipientName: e.target.value })}
+                    className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="text" placeholder="მიმღების ტელეფონი" value={deliveryDetails.recipientPhone}
+                    onChange={(e) => setDeliveryDetails({ ...deliveryDetails, recipientPhone: e.target.value })}
+                    className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="text" placeholder="კომენტარი" value={deliveryDetails.comment}
+                    onChange={(e) => setDeliveryDetails({ ...deliveryDetails, comment: e.target.value })}
+                    className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Left: cash + banks */}
               <div className="space-y-5">
@@ -991,40 +1071,80 @@ export const POSView: React.FC<Props> = ({
         </div>
       )}
 
-      {/* MODAL: Order payment-status selection (#9-11) */}
+      {/* MODAL: Order payment-status + transportation (#9-11) */}
       {showOrderModal && (
         <OrderPaymentModal
-          grandTotal={grandTotal}
+          itemsTotal={Math.max(0, subtotal - Number(discount || 0))}
           loading={loading}
           onClose={() => setShowOrderModal(false)}
-          onConfirm={(paid, method) => handleCreateOrder(paid, method)}
+          onConfirm={(paid, method, delivery) => handleCreateOrder(paid, method, delivery)}
         />
       )}
     </div>
   );
 };
 
-// Inline Component: Order Payment Status Modal
+// Inline Component: Order Payment Status + Transportation Modal
 const OrderPaymentModal: React.FC<{
-  grandTotal: number;
+  itemsTotal: number;
   loading: boolean;
   onClose: () => void;
-  onConfirm: (paidAmount: number, method: PaymentMethod) => void;
-}> = ({ grandTotal, loading, onClose, onConfirm }) => {
+  onConfirm: (
+    paidAmount: number,
+    method: PaymentMethod,
+    delivery: { type: 'pickup' | 'delivery'; fee: number; address: string; recipientName: string; recipientPhone: string; comment: string }
+  ) => void;
+}> = ({ itemsTotal, loading, onClose, onConfirm }) => {
   const [status, setStatus] = useState<'unpaid' | 'partial' | 'paid'>('unpaid');
   const [amount, setAmount] = useState<number>(0);
   const [method, setMethod] = useState<PaymentMethod>('cash');
 
+  // Transportation (optional). Default = pickup.
+  const [dType, setDType] = useState<'pickup' | 'delivery'>('pickup');
+  const [dFee, setDFee] = useState<number>(0);
+  const [dAddress, setDAddress] = useState('');
+  const [dRecipient, setDRecipient] = useState('');
+  const [dPhone, setDPhone] = useState('');
+  const [dComment, setDComment] = useState('');
+
+  const delFee = dType === 'delivery' ? dFee : 0;
+  const grandTotal = Math.round((itemsTotal + delFee) * 100) / 100;
   const paid = status === 'unpaid' ? 0 : status === 'paid' ? grandTotal : Math.min(amount, grandTotal);
   const remaining = Math.max(0, grandTotal - paid);
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
-        <h3 className="text-base font-bold text-slate-900">შეკვეთის გაფორმება — გადახდის სტატუსი</h3>
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs my-8">
+        <h3 className="text-base font-bold text-slate-900">შეკვეთის გაფორმება</h3>
+
+        {/* Transportation */}
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase">მიწოდება</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setDType('pickup')}
+              className={`py-2 rounded-xl font-bold border transition cursor-pointer ${dType === 'pickup' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-white border-slate-300 text-slate-600'}`}>
+              🏢 ადგილიდან გატანა
+            </button>
+            <button type="button" onClick={() => setDType('delivery')}
+              className={`py-2 rounded-xl font-bold border transition cursor-pointer ${dType === 'delivery' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-white border-slate-300 text-slate-600'}`}>
+              🚚 ტრანსპორტირება
+            </button>
+          </div>
+          {dType === 'delivery' && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <input type="text" placeholder="მისატანი მისამართი" value={dAddress} onChange={(e) => setDAddress(e.target.value)} className="col-span-2 border border-slate-300 rounded-xl p-2 outline-none focus:ring-2 focus:ring-blue-500" />
+              <EditableNumber value={dFee} onChange={setDFee} placeholder="ტრანსპ. ფასი (₾)" className="border border-slate-300 rounded-xl p-2 font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="text" placeholder="მიმღები" value={dRecipient} onChange={(e) => setDRecipient(e.target.value)} className="border border-slate-300 rounded-xl p-2 outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="text" placeholder="მიმღების ტელეფონი" value={dPhone} onChange={(e) => setDPhone(e.target.value)} className="border border-slate-300 rounded-xl p-2 outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="text" placeholder="კომენტარი" value={dComment} onChange={(e) => setDComment(e.target.value)} className="border border-slate-300 rounded-xl p-2 outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          )}
+        </div>
 
         <div className="bg-slate-900 text-white rounded-xl p-3 space-y-1">
-          <div className="flex justify-between"><span className="text-slate-300">შეკვეთის სრული თანხა:</span><span className="font-bold">{formatMoney(grandTotal)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-300">პროდუქციის ჯამი:</span><span className="font-bold">{formatMoney(itemsTotal)}</span></div>
+          {delFee > 0 && <div className="flex justify-between"><span className="text-slate-300">ტრანსპორტირება:</span><span className="font-bold">{formatMoney(delFee)}</span></div>}
+          <div className="flex justify-between border-t border-slate-700 pt-1"><span className="text-slate-300">შეკვეთის სრული თანხა:</span><span className="font-bold">{formatMoney(grandTotal)}</span></div>
           <div className="flex justify-between"><span className="text-slate-300">გადახდილი:</span><span className="font-bold text-emerald-400">{formatMoney(paid)}</span></div>
           <div className="flex justify-between"><span className="text-slate-300">დარჩენილი:</span><span className="font-bold text-amber-400">{formatMoney(remaining)}</span></div>
         </div>
@@ -1075,7 +1195,7 @@ const OrderPaymentModal: React.FC<{
           <button
             type="button"
             disabled={loading}
-            onClick={() => onConfirm(paid, method)}
+            onClick={() => onConfirm(paid, method, { type: dType, fee: dFee, address: dAddress, recipientName: dRecipient, recipientPhone: dPhone, comment: dComment })}
             className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer disabled:opacity-60"
           >
             {loading ? 'ინახება...' : 'შეკვეთის შენახვა'}

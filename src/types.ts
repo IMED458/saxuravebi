@@ -322,6 +322,9 @@ export interface Order {
   paidAmount: number;
   balanceDue: number;
   paymentStatus: OrderPaymentStatus;
+  itemsTotal?: number;
+  deliveryType?: 'pickup' | 'delivery';
+  deliveryFee?: number;
   deliveryAddress?: string;
   recipientName?: string;
   recipientPhone?: string;

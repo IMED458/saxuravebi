@@ -15,7 +15,8 @@ import {
   CreditCard,
   Building,
   Filter,
-  Check
+  Check,
+  Pencil
 } from 'lucide-react';
 import { Order, OrderStatus, PaymentMethod, Settings, Product, User } from '../types';
 import { Trash2 } from 'lucide-react';
@@ -46,6 +47,7 @@ export const OrdersView: React.FC<Props> = ({ user, orders, products, settings, 
   const [paymentModalOrderId, setPaymentModalOrderId] = useState<string | null>(null);
   const [fulfillModalOrder, setFulfillModalOrder] = useState<Order | null>(null);
   const [statusModalOrder, setStatusModalOrder] = useState<Order | null>(null);
+  const [editOrder, setEditOrder] = useState<Order | null>(null);
 
   const paymentModalOrder = paymentModalOrderId ? orders.find((o) => o.id === paymentModalOrderId) || null : null;
 
@@ -272,6 +274,14 @@ export const OrdersView: React.FC<Props> = ({ user, orders, products, settings, 
                         )}
 
                         <button
+                          onClick={() => setEditOrder(o)}
+                          className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition cursor-pointer"
+                          title="რედაქტირება (კლიენტი / ტრანსპორტირება)"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+
+                        <button
                           onClick={() => setStatusModalOrder(o)}
                           className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
                           title="სტატუსის შეცვლა"
@@ -338,6 +348,105 @@ export const OrdersView: React.FC<Props> = ({ user, orders, products, settings, 
           }}
         />
       )}
+
+      {/* MODAL: Edit order (customer / transportation added later) */}
+      {editOrder && (
+        <EditOrderModal
+          order={editOrder}
+          actor={{ actorId: user.id, actorName: `${user.firstName} ${user.lastName}` }}
+          onClose={() => setEditOrder(null)}
+          onSuccess={() => { onRefreshData(); setEditOrder(null); }}
+        />
+      )}
+    </div>
+  );
+};
+
+// Edit order — mainly to add/change transportation later, plus customer name/comment.
+const EditOrderModal: React.FC<{
+  order: Order;
+  actor: { actorId: string; actorName: string };
+  onClose: () => void;
+  onSuccess: () => void;
+}> = ({ order, actor, onClose, onSuccess }) => {
+  const [customerName, setCustomerName] = useState(order.customerName || '');
+  const [customerPhone, setCustomerPhone] = useState(order.customerPhone || '');
+  const [dType, setDType] = useState<'pickup' | 'delivery'>(order.deliveryType || (order.deliveryAddress ? 'delivery' : 'pickup'));
+  const [dFee, setDFee] = useState<string>(order.deliveryFee ? String(order.deliveryFee) : '');
+  const [dAddress, setDAddress] = useState(order.deliveryAddress || '');
+  const [dRecipient, setDRecipient] = useState(order.recipientName || '');
+  const [dPhone, setDPhone] = useState(order.recipientPhone || '');
+  const [comment, setComment] = useState(order.comment || '');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await api.updateOrder(order.id, {
+        customerName,
+        customerPhone,
+        deliveryType: dType,
+        deliveryFee: dType === 'delivery' ? parseFloat(dFee) || 0 : 0,
+        deliveryAddress: dType === 'delivery' ? dAddress : '',
+        recipientName: dType === 'delivery' ? dRecipient : '',
+        recipientPhone: dType === 'delivery' ? dPhone : '',
+        comment,
+        ...actor
+      });
+      onSuccess();
+    } catch (e: any) {
+      alert(e?.message || 'შენახვა ვერ განხორციელდა');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inp = 'w-full border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:ring-2 focus:ring-blue-500';
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs my-8">
+        <h3 className="text-base font-bold text-slate-900">შეკვეთის რედაქტირება — {order.orderNo}</h3>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">კლიენტი</label>
+            <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className={inp} />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">ტელეფონი</label>
+            <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className={inp} />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase">მიწოდება</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setDType('pickup')} className={`py-2 rounded-xl font-bold border cursor-pointer ${dType === 'pickup' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-white border-slate-300 text-slate-600'}`}>🏢 ადგილიდან გატანა</button>
+            <button type="button" onClick={() => setDType('delivery')} className={`py-2 rounded-xl font-bold border cursor-pointer ${dType === 'delivery' ? 'bg-blue-50 border-blue-600 text-blue-700' : 'bg-white border-slate-300 text-slate-600'}`}>🚚 ტრანსპორტირება</button>
+          </div>
+          {dType === 'delivery' && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <input placeholder="მისატანი მისამართი" value={dAddress} onChange={(e) => setDAddress(e.target.value)} className={`col-span-2 ${inp}`} />
+              <input inputMode="decimal" placeholder="ტრანსპ. ფასი (₾)" value={dFee} onChange={(e) => setDFee(e.target.value.replace(/[^0-9.]/g, ''))} className={`${inp} font-bold`} />
+              <input placeholder="მიმღები" value={dRecipient} onChange={(e) => setDRecipient(e.target.value)} className={inp} />
+              <input placeholder="მიმღების ტელეფონი" value={dPhone} onChange={(e) => setDPhone(e.target.value)} className={`col-span-2 ${inp}`} />
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">კომენტარი</label>
+          <input value={comment} onChange={(e) => setComment(e.target.value)} className={inp} />
+        </div>
+
+        <div className="flex gap-2 pt-1">
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-semibold cursor-pointer">გაუქმება</button>
+          <button type="button" disabled={saving} onClick={submit} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer disabled:opacity-60">
+            {saving ? 'ინახება...' : 'შენახვა'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

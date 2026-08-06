@@ -1177,17 +1177,17 @@ export const api = {
     const data = await ready();
     const {
       customerId, customerName, customerPhone, items, paidAmount = 0, paymentMethod = 'cash',
-      deliveryAddress, recipientName, recipientPhone, comment, userId, userName
+      deliveryType, deliveryFee, deliveryAddress, recipientName, recipientPhone, comment, userId, userName
     } = payload;
-    const customer = data.customers.find((c) => c.id === customerId);
-    if (!customer && !customerName) throw new Error('აირჩიეთ ან მიუთითეთ კლიენტი');
+    // Customer is optional for orders too (anonymous allowed).
 
     const oSeq = String(data.counters.order++).padStart(6, '0');
     const orderNo = `ORD-2026-${oSeq}`;
-    let grandTotal = 0;
+    const customer = customerId ? data.customers.find((c) => c.id === customerId) : null;
+    let itemsTotal = 0;
     const oItems = (items || []).map((it: any) => {
       const line = Number(it.quantity) * Number(it.price || it.sellingPrice);
-      grandTotal += line;
+      itemsTotal += line;
       return {
         id: uid('oitem'),
         productId: it.productId,
@@ -1201,7 +1201,11 @@ export const api = {
     });
     const custName =
       customerName ||
-      (customer?.type === 'company' ? customer.companyName || customer.name : `${customer?.name || ''} ${customer?.lastName || ''}`.trim());
+      (customer?.type === 'company' ? customer.companyName || customer.name : `${customer?.name || ''} ${customer?.lastName || ''}`.trim()) ||
+      'ანონიმური კლიენტი';
+
+    const delFee = deliveryType === 'delivery' ? Number(deliveryFee) || 0 : 0;
+    const grandTotal = Math.round((itemsTotal + delFee) * 100) / 100;
 
     const initialPaid = Math.min(Number(paidAmount) || 0, grandTotal);
     const balanceDue = Math.max(0, grandTotal - initialPaid);
@@ -1231,10 +1235,13 @@ export const api = {
       customerPhone: customerPhone || customer?.phone || '',
       date: new Date().toISOString(),
       items: oItems,
+      itemsTotal,
       grandTotal,
       paidAmount: initialPaid,
       balanceDue,
       paymentStatus,
+      deliveryType: deliveryType || 'pickup',
+      deliveryFee: delFee,
       deliveryAddress,
       recipientName,
       recipientPhone,
@@ -1280,6 +1287,52 @@ export const api = {
     if (!ord) throw new Error('შეკვეთა ვერ მოიძებნა');
     if (status) ord.status = status as any;
     await store.set('orders', ord);
+    return ord;
+  },
+
+  /**
+   * Edit an order — customer, comment, and especially transportation added
+   * later. If the delivery fee changes, the total and payment status are
+   * recomputed against the existing payments.
+   */
+  async updateOrder(id: string, payload: any): Promise<Order> {
+    const data = await ready();
+    const ord = data.orders.find((o) => o.id === id);
+    if (!ord) throw new Error('შეკვეთა ვერ მოიძებნა');
+    const {
+      customerId, customerName, customerPhone, deliveryType, deliveryFee,
+      deliveryAddress, recipientName, recipientPhone, comment, actorId, actorName
+    } = payload;
+
+    if (customerId !== undefined) {
+      const cust = customerId ? data.customers.find((c) => c.id === customerId) : null;
+      ord.customerId = customerId || '';
+      ord.customerName = cust
+        ? cust.type === 'company' ? cust.companyName || cust.name : `${cust.name} ${cust.lastName || ''}`.trim()
+        : customerName || 'ანონიმური კლიენტი';
+      ord.customerPhone = cust?.phone || customerPhone || ord.customerPhone;
+    } else if (customerName !== undefined) {
+      ord.customerName = customerName;
+    }
+    if (customerPhone !== undefined) ord.customerPhone = customerPhone;
+    if (deliveryType !== undefined) ord.deliveryType = deliveryType;
+    if (deliveryAddress !== undefined) ord.deliveryAddress = deliveryAddress;
+    if (recipientName !== undefined) ord.recipientName = recipientName;
+    if (recipientPhone !== undefined) ord.recipientPhone = recipientPhone;
+    if (comment !== undefined) ord.comment = comment;
+
+    if (deliveryFee !== undefined || deliveryType !== undefined) {
+      const delFee = (deliveryType ?? ord.deliveryType) === 'delivery' ? Number(deliveryFee ?? ord.deliveryFee) || 0 : 0;
+      ord.deliveryFee = delFee;
+      const itemsTotal = ord.itemsTotal ?? ord.items.reduce((s, it) => s + it.total, 0);
+      ord.itemsTotal = itemsTotal;
+      ord.grandTotal = Math.round((itemsTotal + delFee) * 100) / 100;
+      ord.balanceDue = Math.max(0, ord.grandTotal - ord.paidAmount);
+      ord.paymentStatus = ord.paidAmount >= ord.grandTotal ? 'fully_paid' : ord.paidAmount > 0 ? 'partially_paid' : 'unpaid';
+    }
+
+    await store.set('orders', ord);
+    await store.logAudit(actorId || 'admin', actorName || 'ადმინი', 'შეკვეთის რედაქტირება', `${ord.orderNo} განახლდა`);
     return ord;
   },
 
