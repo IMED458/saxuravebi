@@ -1484,8 +1484,9 @@ export const api = {
     return { success: true };
   },
 
-  async fulfillOrder(id: string): Promise<Order> {
+  async fulfillOrder(id: string, payload?: any): Promise<Order> {
     const data = await ready();
+    const { receivedByName, actorId, actorName } = payload || {};
     const ord = data.orders.find((o) => o.id === id);
     if (!ord) throw new Error('შეკვეთა ვერ მოიძებნა');
     if (ord.isFulfilled) throw new Error('შეკვეთა უკვე გაცემულია!');
@@ -1494,6 +1495,12 @@ export const api = {
     const changedProducts: Product[] = [];
     const changedBatches: ProductBatch[] = [];
     const newMovements: StockMovement[] = [];
+    const saleItems: SaleItem[] = [];
+
+    // Invoice number for the sale created from this fulfilled order.
+    const invSeq = String(data.counters.invoice++).padStart(6, '0');
+    const invoiceNo = `INV-2026-${invSeq}`;
+    let subtotal = 0;
 
     for (const item of ord.items) {
       const prod = data.products.find((p) => p.id === item.productId);
@@ -1506,6 +1513,27 @@ export const api = {
       prod.totalSold = (prod.totalSold || 0) + qty;
       prod.updatedAt = nowIso;
       changedProducts.push(prod);
+
+      // Build the sale line with historical cost snapshot (for real profit).
+      const costSnapshot = prod.averageCostPrice || prod.lastCostPrice || 0;
+      const lineTotal = round2(qty * item.price);
+      const costTotal = round2(qty * costSnapshot);
+      subtotal += lineTotal;
+      saleItems.push({
+        id: uid('sitem'),
+        saleId: '',
+        productId: prod.id,
+        productName: prod.name,
+        productCode: prod.code,
+        unit: prod.unit,
+        quantity: qty,
+        sellingPrice: item.price,
+        defaultSellingPrice: prod.sellingPrice,
+        costPriceSnapshot: costSnapshot,
+        lineTotal,
+        costTotal,
+        profitAmount: lineTotal - costTotal
+      });
 
       let qtyToDeduct = qty;
       for (const batch of data.productBatches.filter((b) => b.productId === prod.id && b.remainingQuantity > 0)) {
@@ -1538,14 +1566,61 @@ export const api = {
     ord.fulfilledAt = nowIso;
     ord.status = 'fulfilled';
 
-    // Goods handed over → any unpaid balance becomes a real customer receivable,
-    // regardless of payment status (credit sale). Stock decrease is independent
-    // of whether the client has paid.
+    const delFee = ord.deliveryType === 'delivery' ? Number(ord.deliveryFee) || 0 : 0;
+    const paymentStatus: 'paid' | 'partial' | 'unpaid' =
+      ord.paidAmount >= ord.grandTotal ? 'paid' : ord.paidAmount > 0 ? 'partial' : 'unpaid';
+
+    // Create the real SALE record so the fulfilled order appears in sales
+    // history. Payments/debt were already recorded on the order, so we do NOT
+    // create new cash transactions or re-add debt here (that would double-count).
+    const newSale: Sale = {
+      id: uid('sale'),
+      invoiceNo,
+      customerId: ord.customerId || '',
+      customerName: ord.customerName,
+      customerPhone: ord.customerPhone || '',
+      userId: actorId || ord.userId || 'user',
+      userName: actorName || ord.userName || 'ოპერატორი',
+      date: nowIso,
+      subtotal,
+      discount: 0,
+      deliveryFee: delFee,
+      grandTotal: ord.grandTotal,
+      paidAmount: ord.paidAmount,
+      balanceDue: ord.balanceDue,
+      paymentStatus,
+      deliveryType: ord.deliveryType || 'pickup',
+      deliveryDetails:
+        ord.deliveryType === 'delivery'
+          ? {
+              address: ord.deliveryAddress || '',
+              recipientName: ord.recipientName || '',
+              recipientPhone: ord.recipientPhone || '',
+              fee: delFee,
+              status: 'delivered'
+            }
+          : undefined,
+      status: 'active',
+      items: saleItems,
+      payments: (ord.payments || []).map((p) => ({ id: uid('spay'), saleId: '', method: p.method, amount: p.amount, date: p.date })),
+      isAnonymous: !ord.customerId,
+      sourceOrderId: ord.id,
+      receivedByName: receivedByName || undefined,
+      createdAt: nowIso
+    };
+    saleItems.forEach((si) => (si.saleId = newSale.id));
+    newSale.payments.forEach((sp) => (sp.saleId = newSale.id));
+    data.sales.unshift(newSale);
+
+    // Goods handed over → any unpaid balance is a real customer receivable
+    // (credit sale). Stock decrease is independent of payment.
     const writes: Promise<any>[] = [
       store.setMany('products', changedProducts),
       store.setMany('productBatches', changedBatches),
       store.setMany('stockMovements', newMovements),
-      store.set('orders', ord)
+      store.set('orders', ord),
+      store.set('sales', newSale),
+      store.saveCounters()
     ];
     const cust = data.customers.find((c) => c.id === ord.customerId);
     if (cust && ord.balanceDue > 0) {
@@ -1555,7 +1630,7 @@ export const api = {
       writes.push(store.set('customers', cust));
     }
     await Promise.all(writes);
-    await store.logAudit(ord.userId || 'user', ord.userName || 'ოპერატორი', 'შეკვეთის გაცემა', `${ord.orderNo} - საქონელი გაიცა, მარაგი ჩამოიჭრა${ord.balanceDue > 0 ? `, დავალიანება: ${ord.balanceDue} ₾` : ''}`);
+    await store.logAudit(actorId || ord.userId || 'user', actorName || ord.userName || 'ოპერატორი', 'შეკვეთის გაცემა', `${ord.orderNo} → გაყიდვა #${invoiceNo}, საქონელი გაიცა${receivedByName ? `, ჩაიბარა: ${receivedByName}` : ''}${ord.balanceDue > 0 ? `, დავალიანება: ${ord.balanceDue} ₾` : ''}`);
     return ord;
   },
 

@@ -329,6 +329,7 @@ export const OrdersView: React.FC<Props> = ({ user, orders, products, settings, 
         <FulfillOrderModal
           order={fulfillModalOrder}
           products={products}
+          actor={{ actorId: user.id, actorName: `${user.firstName} ${user.lastName}` }}
           onClose={() => setFulfillModalOrder(null)}
           onSuccess={() => {
             onRefreshData();
@@ -633,10 +634,12 @@ const AddPaymentModal: React.FC<{
 const FulfillOrderModal: React.FC<{
   order: Order;
   products: Product[];
+  actor: { actorId: string; actorName: string };
   onClose: () => void;
   onSuccess: () => void;
-}> = ({ order, products, onClose, onSuccess }) => {
+}> = ({ order, products, actor, onClose, onSuccess }) => {
   const [loading, setLoading] = useState(false);
+  const [receivedBy, setReceivedBy] = useState('');
 
   // Check stock availability
   const stockCheck = order.items.map((item) => {
@@ -661,8 +664,8 @@ const FulfillOrderModal: React.FC<{
 
     setLoading(true);
     try {
-      await api.fulfillOrder(order.id);
-      alert('შეკვეთა წარმატებით შესრულდა და საქონელი ჩამოიჭრა მარაგებიდან!');
+      await api.fulfillOrder(order.id, { receivedByName: receivedBy.trim() || undefined, ...actor });
+      alert('შეკვეთა გაიცა და გაყიდვად შეინახა გაყიდვების ისტორიაში!');
       onSuccess();
     } catch (err: any) {
       alert('შეცდომა შეკვეთის გაცემისას: ' + err.message);
@@ -719,6 +722,35 @@ const FulfillOrderModal: React.FC<{
           </table>
         </div>
 
+        {/* Payment status + who received the goods */}
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2 text-xs">
+          <div className="flex justify-between">
+            <span className="text-slate-600">გადახდის სტატუსი:</span>
+            <span className={`font-bold ${order.paymentStatus === 'fully_paid' ? 'text-emerald-600' : order.paymentStatus === 'partially_paid' ? 'text-amber-600' : 'text-red-600'}`}>
+              {order.paymentStatus === 'fully_paid' ? 'სრულად გადახდილი' : order.paymentStatus === 'partially_paid' ? 'ნაწილობრივ გადახდილი' : 'გადაუხდელი'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-600">დარჩენილი გადასახდელი:</span>
+            <span className="font-bold text-slate-900">{formatMoney(order.balanceDue)}</span>
+          </div>
+          {order.balanceDue > 0 && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg p-2">
+              ⚠️ თანხა სრულად არ არის გადახდილი. გაცემისას საქონელი გაიცემა კრედიტით და დარჩენილი თანხა კლიენტს დავალიანებად დაერიცხება. (გადახდის დასამატებლად დახურეთ და გამოიყენეთ 💵 ღილაკი)
+            </p>
+          )}
+          <div>
+            <label className="block text-[10px] font-bold text-slate-500 mb-0.5">ჩაიბარა (მიმღების სახელი) — არასავალდებულო</label>
+            <input
+              type="text"
+              value={receivedBy}
+              onChange={(e) => setReceivedBy(e.target.value)}
+              placeholder="მაგ: გიორგი მაისურაძე"
+              className="w-full border border-slate-300 rounded-xl p-2 text-xs outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
         <div className="flex gap-2 pt-2">
           <button
             type="button"
@@ -734,7 +766,7 @@ const FulfillOrderModal: React.FC<{
             className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs cursor-pointer flex items-center justify-center gap-1.5"
           >
             <Check className="w-4 h-4" />
-            <span>საქონლის გაცემა & ჩამოჭრა</span>
+            <span>გაცემა & გაყიდვად შენახვა</span>
           </button>
         </div>
       </div>
